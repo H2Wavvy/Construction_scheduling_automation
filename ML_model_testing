@@ -1,0 +1,679 @@
+
+'''
+        DATASET INFORMATION 
+
+        Description of the features and targets of the models, described in order of column index. 
+
+        Features:       Plan_Area               ;   Float - Plan area of structure
+                        Volume	                ;   Float - Volume of individual object (0 for object N/A)
+                        Surface_Area	        ;   Float - Surface area of individual object (0 for object N/A)
+                        BB_x	                ;   Float - Length of object (Bounding Box)
+                        BB_y	                ;   Float - Width of object (Bounding Box)
+                        BB_z	                ;   Float - Depth of object (Bounding Box)
+                        Min_z	                ;   Float - Lowest elevation of object
+                        Max_z	                ;   Float - Highest elevation of object
+                        Apect_Ratio_xy	        ;   Float - BB_x / BB_y
+                        Aspect_Ratio_Z	        ;   Float - BB_z / MAX(BB_x, BB_y)
+                        Thickness_Proxy	        ;   Float - Volume / Surface_Area
+                        Density	                ;   Float - Density of object material 
+                        No_faces	            ;   Int - Number of object faces (curved and planar)
+                        is_WetTrade	            ;   Binary Int - 1/0 if wet trade required
+                        is_HotTrade	            ;   Binary Int - 1/0 if hot trade required
+                        Is_SurfaceConstruction	;   Binary Int - 1/0 if surface construction required
+                        is_collective	        ;   Binary Int - 1/0 if object part of a collection (e.g. truss)
+                        is_prefabricated	    ;   Binary Int - 1/0 if object is prefabricated
+                        No_dependance	        ;   Int - Number of other objects this object relies on (by physics)
+                        No_dependants	        ;   Int - Number of other objects that rely on this object (by physics)
+                        Has_Predceding_Access	;   Binary Int - 1/0 if there is stairs/ramps leading to this object when constructed
+                        Storey	                ;   Int - Storey of the object (-1 for foundations, 0,1,2,3... otherwise)
+                        is_installed	        ;   Binary Int - 1/0 if object is a off-shelf unit to be installed (e.g. windows)
+                        Relative_elevation	    ;   Float - Max_z / Total structure's height
+                        Is_edge_object	        ;   Binary Int - 1/0 if object is on the perimeter of the structure
+                        is_masonry	            ;   Binary Int - 1/0 if object is masonry
+                        is_steel	            ;   Binary Int - 1/0 if object is steel
+                        is_Composite	        ;   Binary Int - 1/0 if object is composite
+                        is_concrete	            ;   Binary Int - 1/0 if object is concrete
+                        is_rock	                ;   Binary Int - 1/0 if object is rock
+                        is_timber               ;   Binary Int - 1/0 if object is timber
+
+        Targets:        Scaffolding_needed	                ;   Binary Int - 1/0 if scaffolding was needed for object's construction
+                        Pre_Construction_proccess_time	    ;   Float - time to carry out pre-construction tasks for object
+                        Construction_proccess_time	        ;   Float - time to carry out construction tasks for object
+                        Post_Construction_proccess_time	    ;   Float - time to carry out post-construction tasks for object
+                        Curing_time	                        ;   Float - time to carry out curing for object
+                        is_formwork	                        ;   Binary Int - 1/0 if formwork is required
+                        is_decking	                        ;   Binary Int - 1/0 if decking is required
+                        is_temporary_support	            ;   Binary Int - 1/0 if temporary support/s is required
+                        is_reinforcement_install	        ;   Binary Int - 1/0 if reinforcement tying is required
+                        is_excavation	                    ;   Binary Int - 1/0 if excavation is required
+                        is_substrate_prep	                ;   Binary Int - 1/0 if substrate preparation is required
+                        is_fastened	                        ;   Binary Int - 1/0 if the object is fastened
+                        is_welded	                        ;   Binary Int - 1/0 if the object is welded
+                        is_lap_splicing	                    ;   Binary Int - 1/0 if the object is lap spliced, or splicing required
+                        is_grouted	                        ;   Binary Int - 1/0 if the object is grouted
+                        is_install_connections	            ;   Binary Int - 1/0 if the connections must be installed for the object
+                        is_gravity_supported	            ;   Binary Int - 1/0 if the object is supported without connections
+                        construction_proccess	            ;   Catagorical Int   - 0: Placement
+                                                                                    1: Installation
+                                                                                    2: Assembley
+                                                                                    3: Casting
+                                                                                    4: Applying
+                                                                                    5: Laying
+                                                                                    6: Piling
+                        is_sealing	                        ;   Binary Int - 1/0 if the object has sealant applied
+                        is_installing_products	            ;   Binary Int - 1/0 if the object must have products installed to it
+                        is_tensioning	                    ;   Binary Int - 1/0 if the object must have tensioning carried out
+                        is_surface_finishing	            ;   Binary Int - 1/0 if the object must have surface products (e.g. paint) applied
+                        is_curing	                        ;   Binary Int - 1/0 if the object must cure
+                        is_formwork_removal	                ;   Binary Int - 1/0 if the formwork must be removed
+                        post_Edge_protection_needed	        ;   Binary Int - 1/0 if post-construction edge protection is needed on site
+                        is_temporary_support_removal	    ;   Binary Int - 1/0 if the object's temporary support must be removed
+                        is_backfilling	                    ;   Binary Int - 1/0 if backfiling is required
+                        is_inspecting	                    ;   Binary Int - 1/0 if the object must be inspected 
+                        Lifting_type                        ;   Catagorical Int  -  0: None
+                                                                                    1: Manual
+                                                                                    2: Hoist
+                                                                                    3: Mobile Crane
+                                                                                    4: Tower Crane
+                                                                                    5: Forklift
+                                                                                    6: Telehandler
+                                                                                    7: Truck    
+
+        
+        Regression model: 
+            Will return the float targets (Pre_Construction_proccess_time, Construction_proccess_time, 
+            Post_Construction_proccess_time and Curing_time). 
+        
+        Classification model:
+            Will return all other targets (binary and catagorical).
+
+'''
+
+# MACHINE LEARNING MODULES
+from sklearn.datasets import load_iris
+from sklearn.model_selection import train_test_split
+from sklearn.neighbors import KNeighborsRegressor
+from sklearn.neighbors import KNeighborsClassifier
+from sklearn.linear_model import LinearRegression
+from sklearn.linear_model import Ridge
+from sklearn.linear_model import Lasso
+from sklearn.ensemble import RandomForestRegressor
+from sklearn.ensemble import GradientBoostingRegressor
+from sklearn.multioutput import MultiOutputRegressor
+from sklearn.multioutput import MultiOutputClassifier
+from sklearn.neural_network import MLPRegressor
+from sklearn.preprocessing import StandardScaler
+from sklearn.pipeline import Pipeline
+from xgboost import XGBRegressor
+from sklearn.multioutput import MultiOutputRegressor
+from sklearn.model_selection import RandomizedSearchCV
+from sklearn.dummy import DummyRegressor, DummyClassifier
+
+# DATA MANAGEMENT MODULES
+import pandas as pd
+import numpy as np
+
+# ---- Getting data ----
+
+df = pd.read_excel('ML_Model_Data.xlsx')
+
+classification_targets = ['Scaffolding_needed','is_formwork','is_decking', 'is_temporary_support', 'is_reinforcement_install', 'is_excavation',
+         'is_substrate_prep', 'is_fastened', 'is_welded', 'is_lap_splicing', 'is_grouted', 'is_install_connections', 'is_gravity_supported',
+         'construction_proccess', 'is_sealing', 'is_installing_products', 'is_tensioning', 'is_surface_finishing', 'is_curing',
+         'is_formwork_removal', 'post_Edge_protection_needed', 'is_temporary_support_removal', 'is_backfilling', 'is_inspecting', 'Lifting_type']
+regression_targets = ['Pre_Construction_proccess_time', 'Construction_proccess_time', 'Post_Construction_proccess_time', 'Curing_time']
+total_inputs = ['Plan_Area', 'Volume', 'Surface_Area', 'BB_x', 'BB_y', 'BB_z', 'Min_z', 'Max_z', 'Apect_Ratio_xy', 'Aspect_Ratio_Z', 'Thickness_Proxy',
+                'Density', 'No_faces', 'is_WetTrade', 'is_HotTrade', 'Is_SurfaceConstruction', 'is_collective', 'is_prefabricated', 'No_dependance',
+                'No_dependants', 'Has_Predceding_Access', 'Storey', 'is_installed', 'Relative_elevation', 'Is_edge_object', 'is_masonry', 'is_steel',
+                'is_Composite', 'is_concrete', 'is_rock', 'is_timber']
+
+df_classif = df[classification_targets]
+
+df_reggres = df[regression_targets]
+
+df_inputs = df[total_inputs]
+
+# ---- REGRESSION MODEL ----
+
+# Split the data to train, test and validation sets
+X_trainval, X_test, y_trainval, y_test = train_test_split(df_inputs, df_reggres, random_state=0)
+
+X_train, X_valid, y_train, y_valid = train_test_split(X_trainval, y_trainval, random_state=0)
+
+# Regression problem dummy model
+dummy = DummyRegressor().fit(X_train, y_train)
+print("dummy_test R^2:", dummy.score(X_test, y_test))
+
+''' K-Neighbours regression'''
+
+def k_neighbours_regression():
+    # Initialise optimsation parameters
+    test_set = 0.0
+    training_set = 0.0
+    validation_set = 0.0
+    n_neighbours = None
+    
+    # Optimising cycle
+    for i in range(1, 100):
+        
+        # Created model current parameter and check if it out performs
+        pipeline = Pipeline([
+            ('scaler', StandardScaler()),
+            ('knn', KNeighborsRegressor(n_neighbors=i))
+        ])
+
+        pipeline.fit(X_train, y_train)
+
+        if pipeline.score(X_valid, y_valid) > validation_set:
+            validation_set = pipeline.score(X_valid, y_valid)
+            test_set = pipeline.score(X_test, y_test)
+            training_set = pipeline.score(X_train, y_train)
+            n_neighbours = i
+
+    print("Optimised n_neighbours:", n_neighbours)
+    print("test_set R^2:", test_set)
+    print("training_set R^2:", training_set)
+    print("validation_set R^2:", validation_set)
+
+''' Least squares (Linear model) '''
+
+def least_squares():
+
+    # Create model
+    pipeline = Pipeline([
+        ('scaler', StandardScaler()),
+        ('lr', LinearRegression())
+    ])
+
+    pipeline.fit(X_train, y_train)
+
+    print("Training_set R^2: {:.2f}".format(pipeline.score(X_train, y_train)))
+    print("Test_set R^2: {:.2f}".format(pipeline.score(X_test, y_test)))
+    print("validation_set R^2: {:.2f}".format(pipeline.score(X_valid, y_valid)))
+
+''' Ridge Regression '''
+
+def ridge_regression():
+    # Initalise optimising parameters
+    test_set = 0.0
+    training_set = 0.0
+    validation_set = 0.0
+    best_alpha = None
+
+    # Optimising cycle
+    for i in np.linspace(0.01, 10.01, 1001):
+        
+        # Create model with parameters and check for out performance
+        pipeline = Pipeline([
+            ('scaler', StandardScaler()),
+            ('ridge', Ridge(alpha=i))
+        ])
+
+        pipeline.fit(X_train, y_train)
+
+        if pipeline.score(X_valid, y_valid) > validation_set:
+            validation_set = pipeline.score(X_valid, y_valid)
+            test_set = pipeline.score(X_test, y_test)
+            training_set = pipeline.score(X_train, y_train)
+            best_alpha = i
+
+    print("optimised alpha:", best_alpha)
+    print("test_set R^2:", test_set)
+    print("training_set R^2:", training_set)
+    print("validation_set R^2:", validation_set)
+
+''' Lasso '''
+
+def Lasso_func():
+    # Initialise parameters
+    test_set = 0.0
+    training_set = 0.0
+    validation_set = 0.0
+    best_alpha = None
+
+    # Optimising cycle
+    for i in np.linspace(0.01, 10.01, 1001):
+
+        # Create model and check for out performance
+        pipeline = Pipeline([
+            ('scaler', StandardScaler()),
+            ('lasso', Lasso(alpha=i, max_iter=1000000))
+        ])
+
+        pipeline.fit(X_train, y_train)
+
+        if pipeline.score(X_valid, y_valid) > validation_set:
+            validation_set = pipeline.score(X_valid, y_valid)
+            test_set = pipeline.score(X_test, y_test)
+            training_set = pipeline.score(X_train, y_train)
+            best_alpha = i
+
+    print("optimised alpha:", best_alpha)
+    print("test_set R^2:", test_set)
+    print("training_set R^2:", training_set)
+    print("validation_set R^2:", validation_set)
+
+''' Random Forests '''
+
+def random_forests():
+    # Initialise parameters
+    test_set = 0.0
+    training_set = 0.0
+    validation_set = 0.0
+    param_i = None
+    param_j = None
+    param_k = None
+
+    # Optimising cycle
+    for i in range(1, 101):      # n_estimators
+        for j in [None, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]:    # max_depth
+            for k in [1, 2, 3, 4, 5, 6]:  # min_samples_leaf
+                
+                # Create model and check for out performance
+                forest = RandomForestRegressor(
+                    n_estimators=i, max_depth=j, 
+                    min_samples_leaf=k, random_state=2)
+                
+                forest.fit(X_train, y_train)
+
+                if forest.score(X_valid, y_valid) > validation_set:
+                    test_set = forest.score(X_test, y_test)
+                    training_set = forest.score(X_train, y_train)
+                    validation_set = forest.score(X_valid, y_valid)
+                    param_i = i
+                    param_j = j
+                    param_k = k
+
+    print("optimised n_estimators:",param_i)
+    print("optimised max_depth:",param_j)
+    print("optimised min_samples_leaf:",param_k)
+    print("test_set R^2:",test_set)
+    print("training_set R^2:",training_set)
+    print("validation_set R^2:", validation_set)
+
+''' Gradient boosted regression trees '''
+
+def gradient_boosted_regression_trees():
+    # Initialise paramters
+    test_set = 0.0
+    training_set = 0.0
+    validation_set = 0.0
+    param_i = None
+    param_j = None
+    param_k = None
+
+    # Optimising cycle
+    for i in range(1, 101):      # n_estimators
+        for j in [None, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]:    # max_depth
+            for k in [1, 2, 3, 4, 5, 6]:  # min_samples_leaf
+
+                # Create model and check for out performance
+                gbrt = MultiOutputRegressor(GradientBoostingRegressor(
+                    random_state=26, learning_rate=k, max_depth=j, n_estimators=i))
+                
+                gbrt.fit(X_train, y_train)
+            
+                if gbrt.score(X_valid, y_valid) > validation_set:
+                    test_set = gbrt.score(X_test, y_test)
+                    training_set = gbrt.score(X_train, y_train)
+                    validation_set = gbrt.score(X_valid, y_valid)
+                    param_i = i
+                    param_j = j
+                    param_k = k
+
+    print("optimised n_estimators:",param_i)
+    print("optimised max_depth:",param_j)
+    print("optimised learning_rate:",param_k)
+    print("test_set R^2:",test_set)
+    print("training_set R^2:",training_set)
+    print("validation_set R^2:", validation_set)
+  
+''' Neural Network '''
+
+def neural_network():
+    # Intialise parameters
+    test_set = 0.0
+    training_set = 0.0
+    validation_set = 0.0
+    best_params = None
+
+    # Optimising cycle
+    for activation in ['tanh', 'relu', 'logistic']:
+        for i_1 in np.linspace(10, 100, 10):
+            for i_2 in np.linspace(10, 100, 10):
+                
+                # Create model and check for out performance
+                pipeline = Pipeline([
+                    ('scaler', StandardScaler()),
+                    ('mlp', MLPRegressor(
+                        solver='adam',        # More robust than lbfgs for complex problems
+                        random_state=0,
+                        activation=activation,
+                        hidden_layer_sizes=[int(i_1), int(i_2)],
+                        max_iter=10000,       # adam needs fewer iterations than lbfgs
+                        early_stopping=True,  # Stops when validation score stops improving
+                        n_iter_no_change=20   # Patience before stopping
+                    ))
+                ])
+
+                pipeline.fit(X_train, y_train)
+
+                if pipeline.score(X_valid, y_valid) > validation_set:
+                    test_set = pipeline.score(X_test, y_test)
+                    training_set = pipeline.score(X_train, y_train)
+                    validation_set = pipeline.score(X_valid, y_valid)
+                    best_params = [activation, int(i_1), int(i_2)]
+
+    print("optimised activation:", best_params[0])
+    print("optimised hidden_layer_sizes:", best_params[1], "x", best_params[2])
+    print("test_set R^2:", test_set)
+    print("training_set R^2:", training_set)
+    print("validation_set R^2:", validation_set)
+
+# ---- CLASSIFICATION MODEL ----
+
+from sklearn.linear_model import LogisticRegression
+from sklearn.svm import LinearSVC
+from sklearn.naive_bayes import GaussianNB, BernoulliNB, MultinomialNB
+from sklearn.tree import DecisionTreeClassifier
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.ensemble import GradientBoostingClassifier
+from sklearn.neural_network import MLPClassifier
+from xgboost import XGBClassifier
+from sklearn.svm import SVC
+from sklearn.metrics import confusion_matrix 
+from sklearn.metrics import classification_report 
+from sklearn.metrics import accuracy_score 
+from sklearn.metrics import f1_score 
+
+# Splitting classification data
+X_trainval_1, X_test_1, y_trainval_1, y_test_1 = train_test_split(df_inputs, df_classif, random_state=0)
+
+X_train_1, X_valid_1, y_train_1, y_valid_1 = train_test_split(X_trainval_1, y_trainval_1, random_state=0)
+
+# Dummey test on the classification data
+dummy = MultiOutputClassifier(DummyClassifier()).fit(X_train_1, y_train_1)
+print("Dummy test accuracy:", dummy.score(X_test_1, y_test_1))
+
+''' K-Neighbours classification'''
+
+def k_neighbours_classification():
+    # Initalise parameters
+    test_set = 0.0
+    training_set = 0.0
+    validation_set = 0.0
+    n_neighbours = None
+
+    # Optimisation cycle
+    for i in range(1, 100):
+
+        # Create model and check for out performance
+        pipeline = Pipeline([
+            ('scaler', StandardScaler()),
+            ('knn', MultiOutputClassifier(KNeighborsClassifier(n_neighbors=i)))
+        ])
+
+        pipeline.fit(X_train_1, y_train_1)
+
+        if pipeline.score(X_valid_1, y_valid_1) > validation_set:
+            test_set = pipeline.score(X_test_1, y_test_1)
+            training_set = pipeline.score(X_train_1, y_train_1)
+            validation_set = pipeline.score(X_valid_1, y_valid_1)
+            n_neighbours = i
+
+    print("optimised n_neighbours", n_neighbours)
+    print("test_set accuracy:", test_set)
+    print("training_set accuracy:", training_set)
+    print("validation_set accuracy:", validation_set)
+
+''' Logistic Regression '''
+
+def logistic_regression():
+    # Intialise parameters
+    test_set = 0.0
+    training_set = 0.0
+    validation_set = 0.0
+    n_neighbours = None
+    
+    # Optimisation cycle
+    for i in range(1,101):
+
+        # Create model and check for out performance 
+        logreg = Pipeline([
+            ('scaler', StandardScaler()),
+            ('knn', MultiOutputClassifier(LogisticRegression(C=i, max_iter=1000000))) # Also L1 vs L2 regularisation option (not sure purpose)
+        ])
+
+        logreg.fit(X_train_1, y_train_1)
+
+        if logreg.score(X_valid_1, y_valid_1) > validation_set:
+            test_set = logreg.score(X_test_1,y_test_1)
+            training_set = logreg.score(X_train_1, y_train_1)
+            validation_set = logreg.score(X_valid_1, y_valid_1)
+            n_neighbours = i
+
+    print("optimised n_neighbours", n_neighbours)
+    print("test_set accuracy:", test_set)
+    print("training_set accuracy:", training_set)
+    print("validation_set accuracy:", validation_set)
+
+''' Linear SVC '''
+
+def Linear_SVC():
+    # Create model and test
+    linear_svm = Pipeline([
+        ('scaler', StandardScaler()),
+        ('knn', MultiOutputClassifier(LinearSVC(max_iter=10000000, dual=True))) # Dosen't seem like any more parameters to optimise
+    ])
+
+    linear_svm.fit(X_train_1, y_train_1)
+
+    print("Test_set accuracy:",linear_svm.score(X_test_1,y_test_1))
+    print("Training_set accuracy:",linear_svm.score(X_train_1, y_train_1))
+    print("Validation_set accuracy:",linear_svm.score(X_valid_1, y_valid_1))
+
+''' Decision Trees '''
+
+def Decision_trees_classification():
+    # Intialise parameters
+    test_set = 0.0
+    training_set = 0.0
+    validation_set = 0.0
+    param_i = None
+    param_j = None
+    param_k = None
+
+    # Optimisation cycle
+    for i in [None, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]:       # max_depth
+        for j in [1, 2, 3, 4, 5, 6]:   # min_samples_leaf
+            for k in ['sqrt', 'log2', None]:        # max_features
+
+                # Create model and check for out performance 
+                DC_classif = Pipeline([
+                    ('scaler', StandardScaler()),
+                    ('dt', MultiOutputClassifier(DecisionTreeClassifier(
+                        random_state=0,
+                        max_depth=i,
+                        min_samples_leaf=j,
+                        max_features=k
+                    )))
+                ])
+
+                DC_classif.fit(X_train_1, y_train_1)
+
+                if DC_classif.score(X_valid_1, y_valid_1) > validation_set:
+                    test_set = DC_classif.score(X_test_1, y_test_1)
+                    training_set = DC_classif.score(X_train_1, y_train_1)
+                    validation_set = DC_classif.score(X_valid_1, y_valid_1)
+                    param_i = i
+                    param_j = j
+                    param_k = k
+
+    print("optimised max_depth:",param_i)
+    print("optimised min_samples_leaf:",param_j)
+    print("optimised max_features:",param_k)
+    print("test_set accuracy:", test_set)
+    print("training_set accuracy:", training_set)
+    print("validation_set accuracy:", validation_set)
+
+''' Random Forests '''
+
+def Random_forest_classification():
+    # Intialise parameters
+    test_set = 0.0
+    training_set = 0.0
+    validation_set = 0.0
+    param_i = None
+    param_j = None
+    param_k = None
+
+    # Optimisation cycle
+    for i in range(1, 101):      # n_estimators
+        for j in [None, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]:    # max_depth
+            for k in [1, 2, 3, 4, 5, 6]:  # min_samples_leaf
+                
+                # Create model and check for out performance 
+                RF_classif = Pipeline([
+                    ('scaler', StandardScaler()),
+                    ('knn', MultiOutputClassifier(RandomForestClassifier(random_state=0, n_estimators=i, max_depth=j, min_samples_leaf=k))) # I think this is all of the parameters to optimise
+                ])
+
+                RF_classif.fit(X_train_1, y_train_1)
+
+                if RF_classif.score(X_valid_1, y_valid_1) > validation_set:
+                    test_set = RF_classif.score(X_test_1, y_test_1)
+                    training_set = RF_classif.score(X_train_1, y_train_1)
+                    validation_set = RF_classif.score(X_valid_1, y_valid_1)
+                    param_i = i
+                    param_j = j
+                    param_k = k
+
+    print("optimised n_estimators:",param_i)
+    print("optimised max_depth:",param_j)
+    print("optimised min_samples_leaf:",param_k)
+    print("test_set accuracy:", test_set)
+    print("training_set accuracy:", training_set)
+    print("validation_set accuracy:", validation_set)
+
+''' Gradient boosted '''
+
+def Gradient_boosted_classification():
+    # Intialise parameter search grid
+    param_grid = {
+        'gb__estimator__max_depth': [None, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20],
+        'gb__estimator__min_samples_leaf': [1, 2, 3, 4, 5, 6],
+        'gb__estimator__n_estimators': range(1, 101)
+    }
+
+    # Create model
+    pipeline = Pipeline([
+        ('scaler', StandardScaler()),
+        ('gb', MultiOutputClassifier(GradientBoostingClassifier(random_state=0)))
+    ])
+
+    # Custom scorer that handles multioutput
+    def multioutput_accuracy(estimator, X, y):
+        return estimator.score(X, y)
+
+    # Test model across the optimisation grid
+    search = RandomizedSearchCV(
+        pipeline, param_grid,
+        n_iter=30,                            
+        cv=3,                                  
+        scoring=multioutput_accuracy,
+        random_state=0,
+        n_jobs=-1                            
+    )
+
+    search.fit(X_train_1, y_train_1)
+
+    best_params = search.best_params_
+    print("optimised n_estimators:", best_params['gb__estimator__n_estimators'])
+    print("optimised max_depth:", best_params['gb__estimator__max_depth'])
+    print("optimised min_samples_leaf:", best_params['gb__estimator__min_samples_leaf'])
+    print("test_set accuracy:", search.score(X_test_1, y_test_1))
+    print("training_set accuracy:", search.score(X_train_1, y_train_1))
+    print("validation_set accuracy:", search.score(X_valid_1, y_valid_1))
+
+''' Neural Network '''
+
+def Neural_network_classification():
+    # Intialise parameters
+    test_set = 0.0
+    training_set = 0.0
+    validation_set = 0.0
+    param1 = None
+    param2 = None
+    layer_size = None
+
+    # Optimisation cycle
+    for i in ['tanh', 'relu', 'logistic']:
+        for i_1 in np.linspace(10, 100, 10):
+            for i_2 in np.linspace(10, 100, 10):
+
+                # Create model and check for out performance 
+                NN_classif = Pipeline([
+                    ('scaler', StandardScaler()),
+                    ('knn', MultiOutputClassifier(MLPClassifier(
+                        solver='lbfgs',
+                        random_state=0,
+                        activation=i,
+                        hidden_layer_sizes=[int(i_1), int(i_2)],  
+                        max_iter=100000 # This covers all of the parameters relevant (but not varying hidden_layer_sizes values such as [40, 70] etc)
+                    )))
+                ])
+
+                NN_classif.fit(X_train_1, y_train_1)
+
+                if NN_classif.score(X_valid_1, y_valid_1) > validation_set:
+                    test_set = NN_classif.score(X_test_1, y_test_1)
+                    training_set = NN_classif.score(X_train_1, y_train_1)
+                    validation_set = NN_classif.score(X_valid_1, y_valid_1)
+                    param1 = i_1
+                    param2 = i_2
+                    layer_size = i
+
+    print("optimised hidden_layer_sizes:", param1, "x", param2)
+    print("optimised activation:", layer_size)
+    print("test_set accuracy:", test_set)
+    print("training_set accuracy:", training_set)
+    print("validation_set accuracy:", validation_set)
+
+''' SVC '''
+
+def SVC_kernel():
+    # Intialise parameters
+    C_val = None
+    gamma_val = None
+    kernal_val = None
+    train_set = 0
+    test_set = 0
+    validation_set = 0.0
+
+    # Optimisation cycle
+    for i in [0.1, 1, 10, 100, 1000]:
+        for j in [0.001, 0.01, 0.1, 1]:
+            for k in ['rbf','linear','poly', 'sigmoid']:
+
+                # Create model and check for out performance 
+                svc = Pipeline([
+                    ('scaler', StandardScaler()),
+                    ('knn', MultiOutputClassifier(SVC(kernel=k, C=i, gamma=j))) # This covers all parameters I believe
+                ])
+
+                svc.fit(X_train_1, y_train_1)
+
+                if svc.score(X_valid_1, y_valid_1) > validation_set:
+                    test_set = svc.score(X_test_1,y_test_1)
+                    train_set = svc.score(X_train_1, y_train_1)
+                    validation_set = svc.score(X_valid_1, y_valid_1)
+                    C_val = i
+                    gamma_val = j
+                    kernal_val = k
+
+    print("Test_set accuracy:",test_set)
+    print("Train_set accuracy::",train_set)
+    print("validation_set accuracy:", validation_set)
+    print("optimised C:",C_val)
+    print("optimised gamma:",gamma_val)
+    print("optimised kernal:",kernal_val)
