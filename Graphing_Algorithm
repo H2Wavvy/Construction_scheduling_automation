@@ -179,15 +179,22 @@
             # Dependency direction: A depends on B only if:
             #   - A's min_z is meaningfully higher than B's min_z (A sits above B), AND
             #   - B's max_z is lower than A's max_z (B doesn't extend above A)
-            #     This prevents a beam from depending on the slab above it.
+            #     For example, this avoids a beam from being dependent on the slab above it.
             
-            # Condition 4: entity a is above entity b or visa versa
-            A_above_B = (A_bbox["min_z"] > B_bbox["min_z"] + 50) and (B_bbox["max_z"] <= A_bbox["max_z"] + z_tol) #Min_z A bigger than Min_z B AND max_z A bigger than max_z B
+            # Condition 4: entity a is above entity b or vice versa
+            A_above_B = (A_bbox["min_z"] > B_bbox["min_z"] + 50) and (B_bbox["max_z"] <= A_bbox["max_z"] + z_tol)
             B_above_A = (B_bbox["min_z"] > A_bbox["min_z"] + 50) and (A_bbox["max_z"] <= B_bbox["max_z"] + z_tol)
+
+            A_embedded_in_B = (B_bbox["min_z"] < A_bbox["min_z"]) and (B_bbox["max_z"] > A_bbox["max_z"])
+            B_embedded_in_A = (A_bbox["min_z"] < B_bbox["min_z"]) and (A_bbox["max_z"] > B_bbox["max_z"])
 
             if A_above_B and not B_above_A:
                 dependency_graph[A_name].add(B_name)
             elif B_above_A and not A_above_B:
+                dependency_graph[B_name].add(A_name)
+            elif A_embedded_in_B and not B_embedded_in_A:
+                dependency_graph[A_name].add(B_name)
+            elif B_embedded_in_A and not A_embedded_in_B:
                 dependency_graph[B_name].add(A_name)
 
         # Compare structural entities with a nested loop ; accordingly add to the dependant graph
