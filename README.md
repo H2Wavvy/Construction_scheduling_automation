@@ -79,6 +79,11 @@ entity_predictors = {
 
 This is a code used for obtaining the features for a structural entity, which are to be used for predicting the construction tasks and their durations for that entity. The inputs are the same as for the graphing_algorithm of 'Complete Entities Data' and 'Raw Geometric Data'. This is an extract from a far more sparse program, and so, more refinements may need to be carried out in order for it to be tested personally. 
 
+# ML_Models_predicting
+
+This is a code which takes as input a structure described in the file itself, and then using this, it makes predictions for each element (structural entity) of this input, for the construction tasks and their durations relevant to it. It can be tested as extracted, as long as the prior code to develop the input is ready. 
+
 # Gantt_Chart_Data
 
 This is the post-processing code used to develop a unified list which contains all the data for a structural model's Gantt chart (construction data). The inputs are the Dependency graph from Graphing_Algorithm, collective entities data from Collectives_identification and the ML models data from ML_Models_predicting. While the output is described. 
+
