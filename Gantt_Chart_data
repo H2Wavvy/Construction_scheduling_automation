@@ -1,0 +1,1082 @@
+
+    def Gantt_data(dependancy_graph, dependant_graph, collective_clusters, entities_construct_data):
+        global progress_labour_value, progress_iteration
+    
+        WORK_START_HOUR = 8
+        WORK_END_HOUR = 17
+        
+        def advance_to_next_work_start(from_datetime):
+            # Function to go to the next day for the next task, when curing has been completed. 
+            # If before 8am same day, snap to 8am
+            day_start = from_datetime.replace(hour=WORK_START_HOUR, minute=0, second=0, microsecond=0)
+            day_end = from_datetime.replace(hour=WORK_END_HOUR, minute=0, second=0, microsecond=0)
+            
+            if from_datetime <= day_start:
+                return day_start
+            elif from_datetime >= day_end:
+                # Snap to next day 8am
+                next_day = from_datetime + datetime.timedelta(days=1)
+                return next_day.replace(hour=WORK_START_HOUR, minute=0, second=0, microsecond=0)
+            else:
+                # Already within working hours
+                return from_datetime
+
+        def advance_working_time(from_datetime, hours):
+            remaining_hours = hours
+
+            current = from_datetime
+
+            while remaining_hours > 0:
+
+                # How many hours are left in the current working day
+                end_of_day = current.replace(hour=WORK_END_HOUR, minute=0, second=0, microsecond=0)
+                hours_left_today = (end_of_day - current).total_seconds() / 3600
+
+                if remaining_hours <= hours_left_today:
+                    # Task finishes today
+                    current = current + datetime.timedelta(hours=remaining_hours)
+                    remaining_hours = 0
+                else:
+                    # Task spills into next day - jump to next day 8am
+                    remaining_hours -= hours_left_today
+                    next_day = current + datetime.timedelta(days=1)
+                    current = next_day.replace(hour=WORK_START_HOUR, minute=0, second=0, microsecond=0)
+
+            return current
+
+        def advance_working_time_reverse(from_datetime, hours):
+            remaining_hours = hours
+
+            current = from_datetime
+
+            while remaining_hours > 0:
+
+                # How many hours of day up until now
+                start_of_day = current.replace(hour=WORK_START_HOUR, minute=0, second=0, microsecond=0)
+                hours_left_today = (current - start_of_day).total_seconds() / 3600
+
+                if remaining_hours <= hours_left_today:
+                    # Task finishes today
+                    current = current - datetime.timedelta(hours=remaining_hours)
+                    remaining_hours = 0
+                else:
+                    # Task spills into next day - jump to next day 8am
+                    remaining_hours -= hours_left_today
+                    previous_day = current - datetime.timedelta(days=1)
+                    current = previous_day.replace(hour=WORK_END_HOUR, minute=0, second=0, microsecond=0)
+
+            return current
+            
+        def heuristic_time_task(entity_data, start_date, name = None, date_form = False):
+            
+            def pre_construction(entity_data):
+                activities_list = []
+                task_dependancies = []
+                is_shuttering = False
+                is_temp_supp = False
+                if entity_data['is_formwork'] == 1:
+                    activities_list.append('Shuttering')
+                    task_dependancies.append('FS EXEC')
+                    is_shuttering = True
+                if entity_data['is_decking'] == 1:
+                    if entity_data['is_install_connections']:
+                        activities_list.append('Decking installation and stud welding')
+                    else:
+                        activities_list.append('Decking installation')
+                    task_dependancies.append('FS EXEC')
+                if entity_data['is_temporary_support'] == 1:
+                    activities_list.append('Temporary Support installation')
+                    is_temp_supp = True
+                if entity_data['is_reinforcement_install'] == 1:
+                    if entity_data['is_lap_splicing']:
+                        activities_list.append('Lapping/Rebar steelwork')
+                    else:
+                        activities_list.append('Rebar steelwork')
+                    task_dependancies.append('FS EXEC')
+                if entity_data['is_excavation'] == 1:
+                    activities_list.append('Excavation')
+                if entity_data['is_substrate_prep'] == 1:
+                    activities_list.append('Substrate preparation')
+                if entity_data['is_install_connections'] == 1:
+                    activities_list.append('Installation of connections')
+                    task_dependancies.append('FS EXEC')
+                return ", ".join(activities_list),task_dependancies, is_shuttering, is_temp_supp
+
+            def construction(entity_data):
+                activities_list = []
+                Lifting_type = entity_data['Lifting_type']
+                construction_process = entity_data['construction_proccess']
+                task_dependancies = []
+
+                if Lifting_type == 2:
+                    activities_list.append('Hoist item')
+                    task_dependancies.append('FS EXEC')
+                elif Lifting_type == 3:
+                    activities_list.append('Crane positioning item')
+                    task_dependancies.append('FS EXEC')
+                elif Lifting_type == 4:
+                    activities_list.append('Crane positioning item')
+                    task_dependancies.append('FS EXEC')
+                elif Lifting_type == 5:
+                    activities_list.append('Forklifting item')
+                    task_dependancies.append('FS EXEC')
+                elif Lifting_type == 6:
+                    activities_list.append('Telehandling item')
+                    task_dependancies.append('FS EXEC')
+
+                if construction_process == 0:
+                    activities_list.append('Placing item')
+                    task_dependancies.append('FS EXEC')
+                elif construction_process == 1:
+                    activities_list.append('Installing item')
+                    task_dependancies.append('FS EXEC')
+                elif construction_process == 2:
+                    activities_list.append('Assembling item')
+                    task_dependancies.append('FS EXEC')
+                elif construction_process == 3:
+                    activities_list.append('Casting item')
+                    task_dependancies.append('FS EXEC')
+                elif construction_process == 4:
+                    activities_list.append('Applying item')
+                    task_dependancies.append('FS EXEC')
+                elif construction_process == 5:
+                    activities_list.append('Laying item')
+                    task_dependancies.append('FS EXEC')
+                elif construction_process == 6:
+                    activities_list.append('Piling item')
+                    task_dependancies.append('FS EXEC')
+
+                if entity_data['is_fastened'] == 1:
+                    activities_list.append('Fastening')
+                    task_dependancies.append('FS EXEC')
+                if entity_data['is_welded'] == 1:
+                    activities_list.append('Welding')
+                    task_dependancies.append('FS EXEC')
+                if entity_data['is_grouted'] == 1:
+                    activities_list.append('Grouting')
+                    task_dependancies.append('FS EXEC')
+                if entity_data['is_gravity_supported'] == 1:
+                    activities_list.append('Gravity supported positioning')
+                if entity_data['Curing_time'] > 0:
+                    activities_list.append('Curing wait')
+                return ", ".join(activities_list), task_dependancies
+
+            def post_construction(entity_data, is_shuttering, is_temp_supp):
+                activities_list = []
+                task_dependancies = []
+                if entity_data['is_backfilling'] == 1:
+                    activities_list.append('Backfilling')
+                if entity_data['is_temporary_support_removal'] == 1 or is_temp_supp:
+                    activities_list.append('Temporary support removal')
+                if entity_data['post_Edge_protection_needed'] == 1:
+                    activities_list.append('Temporary edge protection')
+                if entity_data['is_formwork_removal'] == 1 or is_shuttering:
+                    activities_list.append('Deshuttering')
+                if entity_data['is_surface_finishing'] == 1:
+                    activities_list.append('Surface product application')
+                if entity_data['is_tensioning'] == 1:
+                    activities_list.append('Tensioning')
+                if entity_data['is_installing_products'] == 1:
+                    activities_list.append('Installing products')
+                if entity_data['is_sealing'] == 1:
+                    activities_list.append('Sealant application')
+                return ", ".join(activities_list), task_dependancies
+
+            # a) Extraction of ML times
+            pre_construction_time = entity_data['Pre_Construction_proccess_time']
+            construction_time = entity_data['Construction_proccess_time']
+            post_construction_time = entity_data['Post_Construction_proccess_time']
+            curing_time = entity_data['Curing_time']
+
+            # b) Intialisations
+            pre_construction_activity = None
+            construction_activity = None
+            post_construction_activity = None
+            Pre_End_date = None
+            Exec_End_date = None
+            Curing_end_date = None
+            post_End_date = None
+            Execution_start = None
+            Pre_start = None
+            Post_start = None
+            task_dependancies_pre = []
+            task_dependancies_exec = []
+            task_dependancies_post = []
+            is_shuttering = False
+            is_temp_supp = False
+
+            if date_form:
+                # The second iteration
+                conditioned_task = start_date['Task']
+                task_start = start_date['date']
+
+                if conditioned_task == 'pre':
+                    # This entity/cluster has a pre-task which is conditioned to only start once the previous entity/cluster has it's exec-task completed.
+                    Pre_start = task_start
+                    pre_construction_activity, task_dependancies_pre, is_shuttering, is_temp_supp = pre_construction(entity_data)
+                    Pre_End_date = advance_working_time(Pre_start, pre_construction_time)
+
+                    Execution_start = Pre_End_date
+                    construction_activity, task_dependancies_exec = construction(entity_data)
+                    Exec_End_date = advance_working_time(Execution_start, construction_time)
+
+                    # ---- Curing ---- (runs on real time, not working hours)
+                    if curing_time > 0:
+                        Curing_end_date = Exec_End_date + datetime.timedelta(hours=curing_time)
+                        Post_start = advance_to_next_work_start(Curing_end_date)
+                    else:
+                        Post_start = Exec_End_date
+
+
+                    if post_construction_time > 0:
+                        post_construction_activity, task_dependancies_post = post_construction(entity_data, is_shuttering, is_temp_supp)
+                        post_End_date = advance_working_time(Post_start, post_construction_time)
+
+                elif conditioned_task == 'exec':
+                    # This entity/cluster has an exec task which is conditioned to only start once the previous entity/cluster has it's exec-task completed. 
+
+                    if pre_construction_time > 0:
+                        Pre_End_date = task_start
+                        pre_construction_activity, task_dependancies_pre, is_shuttering, is_temp_supp = pre_construction(entity_data)
+                        # Going backwards in time - because there is no condition for the pre-task
+                        Pre_start = advance_working_time_reverse(Pre_End_date, pre_construction_time)
+                    
+                    # ---- Construction ----
+                    Execution_start = task_start
+                    construction_activity, task_dependancies_exec = construction(entity_data)
+                    Exec_End_date = advance_working_time(Execution_start, construction_time)
+
+                    # ---- Curing ---- (runs on real time, not working hours)
+                    if curing_time > 0:
+                        Curing_end_date = Exec_End_date + datetime.timedelta(hours=curing_time)
+                        Post_start = advance_to_next_work_start(Curing_end_date)
+                    else:
+                        Post_start = Exec_End_date
+
+                    # ---- Post-construction ----
+                    if post_construction_time > 0:
+                        post_construction_activity, task_dependancies_post = post_construction(entity_data, is_shuttering, is_temp_supp)
+                        post_End_date = advance_working_time(Post_start, post_construction_time)
+
+            else:
+
+                current = start_date
+
+                # ---- Pre-construction ----
+                if pre_construction_time > 0:
+                    Pre_start = current
+                    pre_construction_activity, task_dependancies_pre, is_shuttering, is_temp_supp = pre_construction(entity_data)
+                    Pre_End_date = advance_working_time(current, pre_construction_time)
+                    current = Pre_End_date
+
+                # ---- Construction ----
+                Execution_start = current
+                construction_activity, task_dependancies_exec = construction(entity_data)
+                Exec_End_date = advance_working_time(current, construction_time)
+
+                # ---- Curing ---- (runs on real time, not working hours)
+                if curing_time > 0:
+                    Curing_end_date = Exec_End_date + datetime.timedelta(hours=curing_time)
+                    Post_start = advance_to_next_work_start(Curing_end_date)
+                else:
+                    Post_start = Exec_End_date
+
+                # ---- Post-construction ----
+                if post_construction_time > 0:
+                    post_construction_activity, task_dependancies_post = post_construction(entity_data, is_shuttering, is_temp_supp)
+                    post_End_date = advance_working_time(Post_start, post_construction_time)
+
+            return {
+                'Name': name,
+                'pre_construction_activity': pre_construction_activity,
+                'exec_construction_activity': construction_activity,
+                'post_construction_activity': post_construction_activity,
+                'Pre_dependance': list(set(task_dependancies_pre)),
+                'Exec_dependance': list(set(task_dependancies_exec)),
+                'Post_dependance': list(set(task_dependancies_post)),
+                'pre_End_date': Pre_End_date,
+                'exec_End_date': Exec_End_date,
+                'curing_end_date': Curing_end_date,
+                'post_End_date': post_End_date,
+                'pre_start_date': Pre_start,
+                'exec_start_date': Execution_start,
+                'post_start_date': Post_start,
+                'start_date': start_date
+            }
+
+        def heuristic_time_task_clusters(cluster_data, start_date, cluster_names = None, date_form = False):
+            
+            def pre_construction_cluster(cluster_data):
+                activities_list = []
+                task_dependancies = []
+                is_shuttering = False
+                is_temp_supp = False
+
+                for entity_data in cluster_data:
+                  
+                    if entity_data['is_formwork'] == 1:
+                        activities_list.append('Shuttering')
+                        task_dependancies.append('FS EXEC')
+                        is_shuttering = True
+                    if entity_data['is_decking'] == 1:
+                        if entity_data['is_install_connections']:
+                            activities_list.append('Decking installation and stud welding')
+                        else:
+                            activities_list.append('Decking installation')
+                        task_dependancies.append('FS EXEC')
+                    if entity_data['is_temporary_support'] == 1:
+                        activities_list.append('Temporary Support installation')
+                        is_temp_supp = True
+                    if entity_data['is_reinforcement_install'] == 1:
+                        if entity_data['is_lap_splicing']:
+                            activities_list.append('Lapping/Rebar steelwork')
+                        else:
+                            activities_list.append('Rebar steelwork')
+                        task_dependancies.append('FS EXEC')
+                    if entity_data['is_excavation'] == 1:
+                        activities_list.append('Excavation')
+                    if entity_data['is_substrate_prep'] == 1:
+                        activities_list.append('Substrate preparation')
+                    if entity_data['is_install_connections'] == 1:
+                        activities_list.append('Installation of connections')
+                        task_dependancies.append('FS EXEC')
+                return ", ".join(activities_list),task_dependancies, is_shuttering, is_temp_supp
+
+            def construction_cluster(cluster_data):
+                activities_list = []
+                task_dependancies = []
+
+                for entity_data in cluster_data:
+                    Lifting_type = entity_data['Lifting_type']
+                    construction_process = entity_data['construction_proccess']
+                    
+                    if Lifting_type == 2:
+                        activities_list.append('Hoist item')
+                        task_dependancies.append('FS EXEC')
+                    elif Lifting_type == 3:
+                        activities_list.append('Crane positioning item')
+                        task_dependancies.append('FS EXEC')
+                    elif Lifting_type == 4:
+                        activities_list.append('Crane positioning item')
+                        task_dependancies.append('FS EXEC')
+                    elif Lifting_type == 5:
+                        activities_list.append('Forklifting item')
+                        task_dependancies.append('FS EXEC')
+                    elif Lifting_type == 6:
+                        activities_list.append('Telehandling item')
+                        task_dependancies.append('FS EXEC')
+
+                    if construction_process == 0:
+                        activities_list.append('Placing item')
+                        task_dependancies.append('FS EXEC')
+                    elif construction_process == 1:
+                        activities_list.append('Installing item')
+                        task_dependancies.append('FS EXEC')
+                    elif construction_process == 2:
+                        activities_list.append('Assembling item')
+                        task_dependancies.append('FS EXEC')
+                    elif construction_process == 3:
+                        activities_list.append('Casting item')
+                        task_dependancies.append('FS EXEC')
+                    elif construction_process == 4:
+                        activities_list.append('Applying item')
+                        task_dependancies.append('FS EXEC')
+                    elif construction_process == 5:
+                        activities_list.append('Laying item')
+                        task_dependancies.append('FS EXEC')
+                    elif construction_process == 6:
+                        activities_list.append('Piling item')
+                        task_dependancies.append('FS EXEC')
+
+                    if entity_data['is_fastened'] == 1:
+                        activities_list.append('Fastening')
+                        task_dependancies.append('FS EXEC')
+                    if entity_data['is_welded'] == 1:
+                        activities_list.append('Welding')
+                        task_dependancies.append('FS EXEC')
+                    if entity_data['is_grouted'] == 1:
+                        activities_list.append('Grouting')
+                        task_dependancies.append('FS EXEC')
+                    if entity_data['is_gravity_supported'] == 1:
+                        activities_list.append('Gravity supported positioning')
+                    if entity_data['Curing_time'] > 0:
+                        activities_list.append('Curing wait')
+                return ", ".join(activities_list), task_dependancies
+
+            def post_construction_cluster(cluster_data, is_shuttering, is_temp_supp):
+                activities_list = []
+                task_dependancies = []
+                for entity_data in cluster_data:
+                    if entity_data['is_backfilling'] == 1:
+                        activities_list.append('Backfilling')
+                    if entity_data['is_temporary_support_removal'] == 1 or is_temp_supp:
+                        activities_list.append('Temporary support removal')
+                    # ... rest of checks
+                return ", ".join(activities_list), task_dependancies
+
+            # a) Extraction of ML times
+            pre_construction_time = 0.0
+            construction_time = 0.0
+            post_construction_time = 0.0
+            curing_time = 0.0
+            for entity_data in cluster_data:
+                pre_construction_time += entity_data['Pre_Construction_proccess_time']
+                construction_time += entity_data['Construction_proccess_time']
+                post_construction_time += entity_data['Post_Construction_proccess_time']
+                curing_time += entity_data['Curing_time']
+
+            # b) Intialisations
+            pre_construction_activity = None
+            construction_activity = None
+            post_construction_activity = None
+            Pre_End_date = None
+            Exec_End_date = None
+            Curing_end_date = None
+            post_End_date = None
+            Execution_start = None
+            Pre_start = None
+            Post_start = None
+            task_dependancies_pre = []
+            task_dependancies_exec = []
+            task_dependancies_post = []
+
+            if date_form:
+                # The second iteration
+                conditioned_task = start_date['Task']
+                task_start = start_date['date']
+
+                if conditioned_task == 'pre':
+                    # This entity/cluster has a pre-task which is conditioned to only start once the previous entity/cluster has it's exec-task completed.
+                    Pre_start = task_start
+                    pre_construction_activity, task_dependancies_pre, is_shuttering, is_temp_supp = pre_construction_cluster(cluster_data)
+                    Pre_End_date = advance_working_time(Pre_start, pre_construction_time)
+
+                    Execution_start = Pre_End_date
+                    construction_activity, task_dependancies_exec = construction_cluster(cluster_data)
+                    Exec_End_date = advance_working_time(Execution_start, construction_time)
+
+                    # ---- Curing ---- (runs on real time, not working hours)
+                    if curing_time > 0:
+                        Curing_end_date = Exec_End_date + datetime.timedelta(hours=curing_time)
+                        Post_start = advance_to_next_work_start(Curing_end_date)
+                    else:
+                        Post_start = Exec_End_date
+
+                    if post_construction_time > 0:
+                        post_construction_activity, task_dependancies_post = post_construction_cluster(cluster_data, is_shuttering, is_temp_supp)
+                        post_End_date = advance_working_time(Post_start, post_construction_time)
+
+                elif conditioned_task == 'exec':
+                    # This entity/cluster has an exec task which is conditioned to only start once the previous entity/cluster has it's exec-task completed. 
+
+                    if pre_construction_time > 0:
+                        Pre_End_date = task_start
+                        pre_construction_activity, task_dependancies_pre, is_shuttering, is_temp_supp = pre_construction_cluster(cluster_data)
+                        # Going backwards in time - because there is no condition for the pre-task
+                        Pre_start = advance_working_time_reverse(Pre_End_date, pre_construction_time)
+                    
+                    # ---- Construction ----
+                    Execution_start = task_start
+                    construction_activity, task_dependancies_exec = construction_cluster(cluster_data)
+                    Exec_End_date = advance_working_time(Execution_start, construction_time)
+
+                    # ---- Curing ---- (runs on real time, not working hours)
+                    if curing_time > 0:
+                        Curing_end_date = Exec_End_date + datetime.timedelta(hours=curing_time)
+                        Post_start = advance_to_next_work_start(Curing_end_date)
+                    else:
+                        Post_start = Exec_End_date
+
+                    # ---- Post-construction ----
+                    if post_construction_time > 0:
+                        post_construction_activity, task_dependancies_post = post_construction_cluster(cluster_data , is_shuttering, is_temp_supp)
+                        post_End_date = advance_working_time(Post_start, post_construction_time)
+
+            else:
+
+                current = start_date
+
+                # ---- Pre-construction ----
+                if pre_construction_time > 0:
+                    Pre_start = current
+                    pre_construction_activity, task_dependancies_pre, is_shuttering, is_temp_supp = pre_construction_cluster(cluster_data)
+                    Pre_End_date = advance_working_time(current, pre_construction_time)
+                    current = Pre_End_date
+
+                # ---- Construction ----
+                Execution_start = current
+                construction_activity, task_dependancies_exec = construction_cluster(cluster_data)
+                Exec_End_date = advance_working_time(current, construction_time)
+
+                # ---- Curing ---- (runs on real time, not working hours)
+                if curing_time > 0:
+                    Curing_end_date = Exec_End_date + datetime.timedelta(hours=curing_time)
+                    Post_start = advance_to_next_work_start(Curing_end_date)
+                else:
+                    Post_start = Exec_End_date
+
+                # ---- Post-construction ----
+                if post_construction_time > 0:
+                    post_construction_activity, task_dependancies_post = post_construction_cluster(cluster_data , is_shuttering, is_temp_supp)
+                    post_End_date = advance_working_time(Post_start, post_construction_time)
+
+            return {
+                'Name': cluster_names,
+                'pre_construction_activity': pre_construction_activity,
+                'exec_construction_activity': construction_activity,
+                'post_construction_activity': post_construction_activity,
+                'Pre_dependance': list(set(task_dependancies_pre)),
+                'Exec_dependance': list(set(task_dependancies_exec)),
+                'Post_dependance': list(set(task_dependancies_post)),
+                'pre_End_date': Pre_End_date,
+                'exec_End_date': Exec_End_date,
+                'curing_end_date': Curing_end_date,
+                'post_End_date': post_End_date,
+                'pre_start_date': Pre_start,
+                'exec_start_date': Execution_start,
+                'post_start_date': Post_start,
+                'start_date': start_date
+            }
+
+        def dependancy_identification(entity_data, entity_heiristic_data, constructed_entities_d, dependancy_graph):
+
+            # a) Find the constructed entities this entity is reliant upon
+            es_dep_upon = dependancy_graph[entity_data['Name']]
+
+            # b) Find the data of the past constructed entities
+            constced_es_data_1 = []
+            for entitys, entitys_data in constructed_entities_d.items():
+                for dep_e in es_dep_upon:
+                    if dep_e in entitys:
+                        constced_es_data_1.append(entitys_data)
+
+            seen = []
+            constced_es_data = []
+            for item in constced_es_data_1:
+                if item not in seen:
+                    seen.append(item)
+                    constced_es_data.append(item)
+
+            # c) Gather requirements for this entity
+            pre_tasks_req = entity_heiristic_data['Pre_dependance']
+            exec_tasks_req = entity_heiristic_data['Exec_dependance']
+            post_tasks_req = entity_heiristic_data['Post_dependance']
+
+            # d) Decipher relationships
+            current_entity = entity_data['Name']
+
+            pre_relationships = []
+            exec_relationships = []
+            post_relationships = []
+            for pst_data in constced_es_data:
+
+                pst_data_heuristic = pst_data['Data']
+                past_entity_name = pst_data_heuristic['Name']
+
+                # Pre-task 
+                if 'FS EXEC' in pre_tasks_req:
+                    pre_relationships.append({'Entity':past_entity_name, 'Nature': 'FS EXEC'})
+                if 'SS EXEC SOL' in pre_tasks_req:
+                    pre_relationships.append({'Entity':current_entity, 'Nature': 'SS EXEC'})
+
+                # Exec-task
+                if 'FS EXEC' in exec_tasks_req:
+                    exec_relationships.append({'Entity':past_entity_name, 'Nature': 'FS EXEC'})
+
+                # Post-task
+                if 'FS EXEC SOL' in post_tasks_req:
+                    post_relationships.append({'Entity':current_entity, 'Nature': 'FS EXEC'})
+
+            return pre_relationships, exec_relationships, post_relationships
+
+        def dependancy_identification_cluster(cluster_names, entity_heiristic_data, constructed_entities_d, dependancy_graph):
+
+            # a) Find the constructed entities this cluster is reliant upon
+            es_dep_upon = []
+            for e in cluster_names:
+                es_dep_upon.extend(dependancy_graph[e])
+
+            # b) Find the data of the past constructed entities
+            constced_es_data_1 = []
+            for entitys, entitys_data in constructed_entities_d.items():
+                for dep_e in es_dep_upon:
+                    if dep_e in entitys:
+                        constced_es_data_1.append(entitys_data)
+
+            seen = []
+            constced_es_data = []
+            for item in constced_es_data_1:
+                if item not in seen:
+                    seen.append(item)
+                    constced_es_data.append(item)
+
+
+            # c) Gather requirements for this entity
+            pre_tasks_req = entity_heiristic_data['Pre_dependance']
+            exec_tasks_req = entity_heiristic_data['Exec_dependance']
+            post_tasks_req = entity_heiristic_data['Post_dependance']
+
+            # d) Decipher relationships
+            current_entity = cluster_names
+
+            pre_relationships = []
+            exec_relationships = []
+            post_relationships = []
+            # Iterate through the past constructed single or cluster entities which this cluster is reliant upon 
+            for pst_data in constced_es_data:
+
+                pst_data_heuristic = pst_data['Data']
+                past_entity_name = pst_data_heuristic['Name']
+
+                # Pre-task 
+                if 'FS EXEC' in pre_tasks_req:
+                    pre_relationships.append({'Entity':past_entity_name, 'Nature': 'FS EXEC'})
+                if 'SS EXEC SOL' in pre_tasks_req:
+                    pre_relationships.append({'Entity':current_entity, 'Nature': 'SS EXEC'})
+
+                # Exec-task
+                if 'FS EXEC' in exec_tasks_req:
+                    exec_relationships.append({'Entity':past_entity_name, 'Nature': 'FS EXEC'})
+
+                # Post-task
+                if 'FS EXEC SOL' in post_tasks_req:
+                    post_relationships.append({'Entity':current_entity, 'Nature': 'FS EXEC'})
+
+            return pre_relationships, exec_relationships, post_relationships
+
+        def get_start_date(entity_or_cluster, construction_data, dependancy_graph, default_start, heuristic_data=None):
+            
+            # 1) Gather all dependency names
+            all_dependencies = []
+            if isinstance(entity_or_cluster, list):
+                for name in entity_or_cluster:
+                    deps = dependancy_graph.get(name, [])
+                    for d in deps:
+                        if d != 'GROUND' and d not in entity_or_cluster:
+                            all_dependencies.append(d)
+            else:
+                deps = dependancy_graph.get(entity_or_cluster, [])
+                for d in deps:
+                    if d != 'GROUND':
+                        all_dependencies.append(d)
+
+            if not all_dependencies:
+                return default_start
+
+            if heuristic_data is not None:
+                # Obtain the dependance codes corrosponding to each task of this entity/cluster
+                dep_codes_pre = heuristic_data.get('Pre_dependance', [])
+                dep_codes_exec = heuristic_data.get('Exec_dependance', [])
+                dep_codes_post = heuristic_data.get('Post_dependance', []) # LATER HUGE ; TODO ;  ADD FUNCTIONALITY TO DEAL WITH NEXT ENTITIES RATHER THAN PREVIOUS AS WELL
+
+            # 2) Find the relevant latest end dates for predescrors
+            latest_predescor_curing_end_date = None
+            latest_predescor_exec_End_date = None
+            for dep_name in all_dependencies:
+
+                # Get the data field for the previous entity (this entity/cluster is dependant upon)
+                matched_data = None
+                for key, value in construction_data.items():
+                    if isinstance(key, tuple):
+                        if dep_name in key:
+                            matched_data = value['Data']
+                            break
+                    else:
+                        if key == dep_name:
+                            matched_data = value['Data']
+                            break
+
+                if matched_data is None:
+                    continue
+
+                temp_cure_end_date = matched_data.get('curing_end_date', None) 
+                temp_exec_end_date = matched_data.get('exec_End_date', None)
+
+                if not latest_predescor_exec_End_date:
+                    latest_predescor_curing_end_date = temp_cure_end_date
+                    latest_predescor_exec_End_date = temp_exec_end_date
+
+                if temp_exec_end_date and (latest_predescor_exec_End_date is None or temp_exec_end_date > latest_predescor_exec_End_date):
+                    latest_predescor_exec_End_date = temp_exec_end_date
+                
+                if temp_cure_end_date and (latest_predescor_curing_end_date is None or temp_cure_end_date > latest_predescor_curing_end_date):
+                    latest_predescor_curing_end_date = temp_cure_end_date
+
+            late_end_date = latest_predescor_curing_end_date if latest_predescor_curing_end_date else latest_predescor_exec_End_date
+
+            # 3) Find relevant start times for the current entity/cluster
+
+            # For each phase (pre, exec, post) of this entity, find the earliest date it can start
+            time_dependance = {}
+
+            if len(dep_codes_pre) > 0:
+                # For this entity/cluster, the pre-construction task has a condition, which is before the execution condition, so more important 
+                if 'FS EXEC' in dep_codes_pre:
+                    # This entity/cluster has a pre-construction task which can only start once the predesecor's curing/exec task is complete. 
+                    time_dependance['Task'] = 'pre'
+                    time_dependance['date'] = late_end_date # pre-task of this entity can only start once curing/exec of previous entity completed
+                                                            # remaining task times can be identified simply from this 
+
+                # Add for more task dependances --->
+
+            elif len(dep_codes_exec) > 0:
+                # For this entity/cluster, the exec-construction task has a condition, which is of secondary importance to pre-construction tasks
+                if 'FS EXEC' in dep_codes_exec:
+                    # This entity/cluster has a exec-construction task which can only start once the predesecor's curing/exec task is complete. 
+                    time_dependance['Task'] = 'exec'
+                    time_dependance['date'] = late_end_date
+
+                # Add for more task dependances --->
+
+            return time_dependance
+
+        # 1) Map of entities data
+        entities_construction_data_map = {}
+        for e_data in entities_construct_data:
+            entities_construction_data_map[e_data['Name']] = e_data
+
+        # 2) Gather start date
+        # INPUT DATE EXTRACTION CODE FROM GUI
+
+        start_date = datetime.datetime(year = 2025, month = 6, day = 1, hour=8)
+
+        # 3) Construction schedule data loop
+
+        # a) Initiate objects
+        it_idx = 0
+        construction_data = {}
+        Next_iteration_entities = None
+        constructed_entities = []
+
+        # Gather propogation waves
+        propogation_waves = []
+
+        # b) Propogation loop across all entities 
+        while True:
+
+            # c) Manage Ground Entities 
+            if it_idx == 0:
+                ground_entities = [] # Can be a clusters list or singular entity
+
+                # Gather the ground entities (initiating)
+                for e in entities_construct_data:
+
+                    if 'GROUND' in dependancy_graph[e['Name']]:
+
+                        clusters_relevant = [cluster for cluster in collective_clusters if e['Name'] in cluster]
+                        if len(clusters_relevant) > 0:
+                            # Length of the relevant clusters must be equal to one, since a single entity can't be in multiple clusters
+                            ground_entities.append(clusters_relevant[0])
+                        else:
+                            ground_entities.append(e['Name'])
+
+                # Find the next iterations entities
+                next_it_ents_temp = []
+                next_it_names = []
+
+                for e in ground_entities:
+                    if isinstance(e, list):
+                        # Cluster entity
+                        for nest_e in e:
+                            # Entities dependant on this component of ground cluster
+                            dependants = dependant_graph[nest_e]
+
+                            # Iterate through entities dependant on this ground cluster entity
+                            for dep in dependants:
+
+                                if dep in next_it_names:
+                                    # Skip enities which have already been appended via way of the clusters code
+                                    continue
+
+                                # Check if the entity dependant on this entity part of ground cluster is also a cluster
+                                clusters_next = [cluster for cluster in collective_clusters if dep in cluster]
+                                if len(clusters_next) > 0:
+
+                                    # Gather all of the entities the cluster (which is dependant on the ground cluster)
+                                    # depends on.
+                                    depends = []
+                                    for clust_e in clusters_next[0]:
+                                        depends.extend(dependancy_graph[clust_e])
+
+                                    # Check, are all of the entities of this cluster dependant on the ground cluster entities or itself (it's a cluster).
+                                    if all([depends_name in ground_entities + clusters_next[0] for depends_name in depends]):
+                                        # All the entities this cluster depends upon are already constructed via the ground entities (or cluster/s).
+                                        # Gather the relevant entities of cluster
+                                        cluster_data_next_it = []
+                                        for clust_e in clusters_next[0]: 
+                                            cluster_data_next_it.append(entities_construction_data_map[clust_e])
+                                            next_it_names.append(clust_e)
+
+                                        next_it_ents_temp.append(cluster_data_next_it)
+
+                                else:
+                                    # dep is a single (non-cluster) entity which is dependant on the ground cluster
+                                    depends = dependancy_graph[dep]
+
+                                    # For this entitiy which is dependant on the ground entitiy, are all of the entities it's dependant upon within ground entities
+                                    if all([depends_name in ground_entities for depends_name in depends]):
+                                        # All previous entities would have been completed
+                                        next_it_ents_temp.append(entities_construction_data_map[dep])
+                                        next_it_names.append(dep)
+                    else:
+
+                        # Entities dependant on this ground entity
+                        dependants = dependant_graph[e]
+
+                        # Iterate through entities dependant on this single (non-cluster) ground entity
+                        for dep in dependants:
+
+                            if dep in next_it_names:
+                                # Skip enities which have already been appended via way of the clusters code
+                                continue
+
+                            # Check whether this entity dependant on the single ground entity is part of a cluster
+                            clusters_next = [cluster for cluster in collective_clusters if dep in cluster]
+                            if len(clusters_next) > 0:
+                                # Gather the entities this cluster is dependant upon
+                                depends = []
+                                for clust_e in clusters_next[0]:
+                                    depends.extend(dependancy_graph[clust_e])
+                            
+                                 # Check, this cluster which is dependant on the ground singular non-cluster entity, that all of the entities it 
+                                 # depends upon have already ben completed or are part of itself (it's a cluster)
+                                if all([depends_name in ground_entities + clusters_next[0] for depends_name in depends]):
+                                    # Gather all of the entities data of this cluster and append to next iteration as a list
+
+                                    next_it_cluster = []
+                                    for clust_e in clusters_next[0]:
+                                        next_it_cluster.append(entities_construction_data_map[clust_e])
+                                        next_it_names.append(clust_e)
+
+                                    next_it_ents_temp.append(next_it_cluster)
+
+                            else:
+                                # entity dependant on the single ground entity is also non-cluster and singular. 
+                                # Find the entities which this single non-cluster entitity relies upon.
+                                depends = dependancy_graph[dep]
+
+                                # For this singular non-cluster entity, reliant on the ground entities, are all of the entities it depends on
+                                # already constructed. 
+                                if all([depends_name in ground_entities for depends_name in depends]):
+                                    # All previous entities that this next iteration entity have already been completed. 
+                                    next_it_ents_temp.append(entities_construction_data_map[dep])
+                                    next_it_names.append(dep)
+
+                # Remove the entities to be constructed
+                for e in ground_entities:
+                    if isinstance(e, list):
+                        constructed_entities.extend(e)
+                    else:
+                        constructed_entities.append(e)
+
+                # Define construction of ground entities
+                for entity in ground_entities:
+                    if isinstance(entity, list):
+                        cluster_data = []
+                        for nest_e in entity:
+                            cluster_data.append(entities_construction_data_map[nest_e])
+
+                        preliminary_data = heuristic_time_task_clusters(cluster_data, start_date, cluster_names=entity) # arbitary start date for now, dosen't matter
+
+                        entity_start = get_start_date(entity, construction_data, dependancy_graph, 
+                                                    start_date, heuristic_data=preliminary_data)
+
+                        # Managing the ground entities only
+                        if isinstance(entity_start, dict):
+                            constructing_data_e = heuristic_time_task_clusters(cluster_data, entity_start, cluster_names=entity, date_form=True)
+                        else:
+                            constructing_data_e = heuristic_time_task_clusters(cluster_data, entity_start, cluster_names=entity, date_form=False)
+
+                        key_name = tuple(entity)  # Convert to tuple here
+                    else:
+                        entity_data = entities_construction_data_map[entity]
+                        preliminary_data = heuristic_time_task(entity_data, start_date, entity) # arbitary start date for now, dosen't matter
+
+                        entity_start = get_start_date(entity, construction_data, dependancy_graph, 
+                                                    start_date, heuristic_data=preliminary_data)
+
+                        # Managing the ground entities only
+                        if isinstance(entity_start, dict):
+                            constructing_data_e = heuristic_time_task(entity_data, entity_start, entity, date_form=True)
+                        else:
+                            constructing_data_e = heuristic_time_task(entity_data, entity_start, entity, date_form=False)
+
+                        key_name = entity
+
+                    construction_data[key_name] = {
+                        'Data': constructing_data_e,
+                        'Reliance': 'START'
+                    }
+                    propogation_waves.append({
+                        'Name': constructing_data_e['Name'],
+                        'Wave_No': it_idx
+                    })
+
+                    progress_labour_value += progress_iteration
+                    progress_spinner(progress_labour_value*100)
+
+            # d) Manage the rest
+            if Next_iteration_entities: # Includes singular and clusters
+                
+                # Iterate through the next propogation of entities/clusters
+                for e in Next_iteration_entities:
+                    if isinstance(e, list):
+                        cluster_names = [nest_e['Name'] for nest_e in e]
+                        preliminary_data = heuristic_time_task_clusters(e, start_date, cluster_names)
+
+                        # Know the entities are not ground entities
+                        pre_start = get_start_date(cluster_names, construction_data, dependancy_graph,
+                                                start_date, heuristic_data=preliminary_data)
+
+                        if isinstance(pre_start, dict):
+                            constructing_data_e = heuristic_time_task_clusters(e, pre_start, cluster_names, date_form=True)
+                        else:
+                            constructing_data_e = heuristic_time_task_clusters(e, pre_start, cluster_names, date_form=False)
+                        
+                        pre_relation, exec_relation, post_relation = dependancy_identification_cluster(
+                            cluster_names, constructing_data_e, construction_data, dependancy_graph)
+
+                        key_name = tuple(cluster_names)
+                        constructed_entities.extend(key_name)
+
+                    else:
+                        preliminary_data = heuristic_time_task(e, start_date, e['Name'])
+
+                        # Get start for pre-construction phase (if it has FS EXEC dependency)
+                        # Know the entities are not ground entities
+                        if preliminary_data.get('Pre_dependance'):
+                            pre_start = get_start_date(e['Name'], construction_data, dependancy_graph,
+                                                    start_date, heuristic_data=preliminary_data)
+                        else:
+                            pre_start = get_start_date(e['Name'], construction_data, dependancy_graph,
+                                                    start_date, heuristic_data=preliminary_data)
+
+                        if isinstance(pre_start, dict):
+                            constructing_data_e = heuristic_time_task(e, pre_start, e['Name'], date_form=True)
+                        else:
+                            constructing_data_e = heuristic_time_task(e, pre_start, e['Name'], date_form=False)
+
+                        pre_relation, exec_relation, post_relation = dependancy_identification(
+                            e, constructing_data_e, construction_data, dependancy_graph)
+
+                        key_name = e['Name']
+                        constructed_entities.append(key_name)
+
+                    # Save the newly constructed entity
+                    construction_data[key_name] = {
+                        'Data':constructing_data_e,
+                        'Reliance': {
+                            'Pre_relation':pre_relation,
+                            'Exec_relation':exec_relation,
+                            'Post_relation':post_relation
+                        }
+                    }
+                    propogation_waves.append({
+                        'Name': constructing_data_e['Name'],
+                        'Wave_No': it_idx
+                    })
+
+                    progress_labour_value += progress_iteration
+                    progress_spinner(progress_labour_value*100)
+
+                # Find the next iteration's entities
+                next_it_ents_temp = []
+                next_it_names = []
+
+                for e in Next_iteration_entities:
+                    # Find the next propogation wave's entities (theoretically) - just those dependant on this propogation wave
+                    dependants = []
+                    if isinstance(e, list):
+                        for nest_e in e:
+                            dependants.extend(dependant_graph[nest_e['Name']])  # extend with the list directly
+                    else:
+                        dependants.extend(dependant_graph[e['Name']])
+
+                    # Iteratre through the entities which are dependant on the current iteration's entities
+                    for dep in dependants: # Just a name
+                        
+                        if dep in next_it_names:
+                            # Potentially already proccessed as a collective 
+                            continue
+
+                        # Find out if this potential entity for the next propogation wave is part of a collective/cluster
+                        clusters_relevant = [cluster for cluster in collective_clusters if dep in cluster]
+                        if len(clusters_relevant) > 0:
+                            # This potential entity for next wave is part of collective
+
+                            # Find out what this entire collective depends upon.
+                            depends = []
+                            for nest_e in clusters_relevant[0]:
+                                # Find out what each entitiy of the collective relies upon 
+                                depends.extend(dependancy_graph[nest_e])
+
+                            # Check, that this collective relies on entities which have already been construced or on itself
+                            if all([depend_name in constructed_entities + clusters_relevant[0] for depend_name in depends]):
+                                # This cluster relies on entities which are itself (typical for cluster) or already constructed.
+
+                                cluster_data_next_it = []
+                                for nest_e in clusters_relevant[0]: 
+                                    cluster_data_next_it.append(entities_construction_data_map[nest_e])
+                                    next_it_names.append(nest_e)
+
+                                next_it_ents_temp.append(cluster_data_next_it)
+                            
+                        else:
+                            # This entity which is reliant on the current propogation wave is singular (non-collective/cluster)
+
+                            # Find out what this potential entity for the next propogation wave depends on to be constructed. 
+                            depends = dependancy_graph[dep]
+
+                            # Check, for this potential entity in the next propogation wave, are all of the entities it relies upon already constructed
+                            if all([depends_name in constructed_entities for depends_name in depends]):
+                                next_it_ents_temp.append(entities_construction_data_map[dep])
+                                next_it_names.append(dep)
+
+                if len(next_it_ents_temp) == 0:
+                    # Stop the loop when propogation is completed
+                    break
+                else:
+                    Next_iteration_entities = next_it_ents_temp
+
+                # For the record of the next propogation wave
+                it_idx += 1
+
+            else:
+                # Append ground entities as the next to be constructed
+                Next_iteration_entities = next_it_ents_temp
+                it_idx += 1
+        
+        # c) Return the scheduling data
+        '''
+            construction_data: dictionary with keys at each entity name
+
+            construction_data[ENTITY_NAME] = {
+                'Data':{
+                            'Name': NAME_OF_THIS_ENTITY, # List or string
+                            'pre_construction_activity': STRING_PRE_TASKS, # Can be None
+                            'exec_construction_activity': STRING_EXEC_TASKS, 
+                            'post_construction_activity': STRING_POST_TASKS, # Can be None
+                            'Pre_dependance': LIST_PRE_TASK_DEPENDANCIES, 
+                            'Exec_dependance': LIST_EXEC_TASK_DEPENDANCIES,
+                            'Post_dependance': LIST_POST_TASK_DEPENDANCIES,
+                            'pre_End_date': PRE_TASK_END_DATE, # Can be None
+                            'exec_End_date': EXEC_TASK_END_DATE,
+                            'curing_end_date': CURE_TASK_END_DATE, # Can be None
+                            'post_End_date': POST_TASK_END_DATE, # Can be None
+                            'pre_start_date': PRE_TASK_START_DATE, # Can be None
+                            'exec_start_date': EXEC_TASK_START_DATE,
+                            'post_End_date': POST_TASK_START_DATE, # Can be None
+                            'start_date': start_date
+                        },
+                'Reliance': {
+                    'Pre_relation':[{'Entity': RELATED_ENTITY_NAME, 'Nature': DEPENDANCY_CODE},{},{},...],
+                    'Exec_relation':[{'Entity': RELATED_ENTITY_NAME, 'Nature': DEPENDANCY_CODE},{},{},...],
+                    'Post_relation':[{'Entity': RELATED_ENTITY_NAME, 'Nature': DEPENDANCY_CODE},{},{},...]
+                }
+            }
+
+            DEPENDANCY_CODE:    FS EXEC - FS RELATION TO EXEC TASK OF DESCRIBED ENTITY
+                                SS EXEC - SS RELATION TO EXEC TASK OF DESCRIBED ENTITY
+        '''
+
+        return construction_data, propogation_waves
