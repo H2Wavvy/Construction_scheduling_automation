@@ -1,0 +1,141 @@
+
+    def ML_models(entities_predictors):
+        global progress_labour_value, progress_iteration
+
+        ''' 
+        Predictors data structure:
+            {
+                'Name': Name, # VALIDATED
+                'Edges':Edges,
+                'Plan_Area': plan_area, # VALIDATED
+                'Volume': Volume,  # VALIDATED
+                'Surface_Area': Surface_Area, # VALIDATED
+                'BB_x': BB_x, # VALIDATED
+                'BB_y': BB_y, # VALIDATED
+                'BB_z': BB_z, # VALIDATED
+                'Min_z': Min_z, # VALIDATED
+                'Max_z': Max_z, # VALIDATED
+                'Apect_Ratio_xy': Apect_Ratio_xy, # VALIDATED
+                'Aspect_Ratio_Z': Aspect_Ratio_Z, # VALIDATED 
+                'Thickness_Proxy': Thickness_Proxy, # VALIDATED
+                'Density': Density, # VALIDATED
+                'No_faces':No_faces, # VALIDATED
+                'is_WetTrade': WetTrade, # VALIDATED
+                'is_HotTrade': HotTrade, # VALIDATED
+                'Is_SurfaceConstruction': Is_SurfaceConstruction, # VALIDATED
+                'is_collective': is_collective, # VALIDATED
+                'is_prefabricated': is_prefabricated, # VALIDATED
+                'No_dependance': No_dependance, # VALIDATED
+                'No_dependants': No_dependant, # VALIDATED
+                'Has_Predceding_Access': Has_Predceding_Access, # VALIDATED
+                'Storey': Storey, # VALIDATED
+                'is_installed': is_installed, # VALIDATED
+                'Relative_elevation':Relative_elevation, # VALIDATED
+                'Is_edge_object':Is_edge_object, # VALIDATED
+                'is_masonry': is_masonry, # VALIDATED
+                'is_steel': is_steel, # VALIDATED
+                'is_Composite': is_Composite, # VALIDATED
+                'is_concrete': is_concrete, # VALIDATED
+                'is_rock': is_rock, # VALIDATED
+                'is_timber': is_timber # VALIDATED
+            }
+        '''
+
+        # 1) Model Training
+        
+        df = pd.read_excel('ML_Model_Data.xlsx')
+
+        classification_targets = ['Scaffolding_needed','is_formwork','is_decking', 'is_temporary_support', 'is_reinforcement_install', 'is_excavation',
+                'is_substrate_prep', 'is_fastened', 'is_welded', 'is_lap_splicing', 'is_grouted', 'is_install_connections', 'is_gravity_supported',
+                'construction_proccess', 'is_sealing', 'is_installing_products', 'is_tensioning', 'is_surface_finishing', 'is_curing',
+                'is_formwork_removal', 'post_Edge_protection_needed', 'is_temporary_support_removal', 'is_backfilling', 'is_inspecting', 'Lifting_type']
+        regression_targets = ['Pre_Construction_proccess_time', 'Construction_proccess_time', 'Post_Construction_proccess_time', 'Curing_time']
+        total_inputs = ['Plan_Area', 'Volume', 'Surface_Area', 'BB_x', 'BB_y', 'BB_z', 'Min_z', 'Max_z', 'Apect_Ratio_xy', 'Aspect_Ratio_Z', 'Thickness_Proxy',
+                        'Density', 'No_faces', 'is_WetTrade', 'is_HotTrade', 'Is_SurfaceConstruction', 'is_collective', 'is_prefabricated', 'No_dependance',
+                        'No_dependants', 'Has_Predceding_Access', 'Storey', 'is_installed', 'Relative_elevation', 'Is_edge_object', 'is_masonry', 'is_steel',
+                        'is_Composite', 'is_concrete', 'is_rock', 'is_timber']
+
+        df_classif = df[classification_targets]
+
+        df_reggres = df[regression_targets]
+
+        df_inputs = df[total_inputs]
+
+        # 2) Regression model
+
+        # Random Forest - trained and tested
+        RF_regression = RandomForestRegressor(
+            n_estimators=4, max_depth=15, 
+            min_samples_leaf=2, random_state=2)
+                    
+        RF_regression.fit(df_inputs, df_reggres)
+
+        # 3) Classification model
+
+        # Random Forest - trained and tested
+        RF_classification = Pipeline([
+            ('scaler', StandardScaler()),
+            ('knn', MultiOutputClassifier(RandomForestClassifier(random_state=0, n_estimators=74, max_depth=None, min_samples_leaf=1))) # I think this is all of the parameters to optimise
+        ])
+
+        RF_classification.fit(df_inputs, df_classif)
+
+        # 4) Apply models
+
+        entities_construction_data = []
+
+        for e_pred in entities_predictors:
+            
+            # Remove Name and Edges keys
+            predictors = {k: v for k, v in e_pred.items() 
+                        if k in total_inputs}
+
+            # Input to the models
+            e_inputs = pd.DataFrame([predictors])[total_inputs]
+
+            #Regression predictions
+            Construction_times = RF_regression.predict(e_inputs)
+
+            #Classification predictions
+            Construction_attrib = RF_classification.predict(e_inputs)
+
+            # Evaluate Results in dict
+            entities_construction_data.append({
+                'Name': e_pred['Name'],
+                'Edges': e_pred['Edges'],
+                'is_collective': e_pred['is_collective'],
+                'Scaffolding_needed': Construction_attrib[0][0],
+                'Pre_Construction_proccess_time': Construction_times[0][0],
+                'Construction_proccess_time': Construction_times[0][1],
+                'Post_Construction_proccess_time': Construction_times[0][2],
+                'Curing_time': Construction_times[0][3],
+                'is_formwork': Construction_attrib[0][1],
+                'is_decking': Construction_attrib[0][2],
+                'is_temporary_support': Construction_attrib[0][3],
+                'is_reinforcement_install': Construction_attrib[0][4],
+                'is_excavation': Construction_attrib[0][5],
+                'is_substrate_prep': Construction_attrib[0][6],
+                'is_fastened': Construction_attrib[0][7],
+                'is_welded': Construction_attrib[0][8],
+                'is_lap_splicing': Construction_attrib[0][9],
+                'is_grouted': Construction_attrib[0][10],
+                'is_install_connections': Construction_attrib[0][11],
+                'is_gravity_supported': Construction_attrib[0][12],
+                'construction_proccess': Construction_attrib[0][13],
+                'is_sealing': Construction_attrib[0][14],
+                'is_installing_products': Construction_attrib[0][15],
+                'is_tensioning': Construction_attrib[0][16],
+                'is_surface_finishing': Construction_attrib[0][17],
+                'is_curing': Construction_attrib[0][18],
+                'is_formwork_removal': Construction_attrib[0][19],
+                'post_Edge_protection_needed': Construction_attrib[0][20],
+                'is_temporary_support_removal': Construction_attrib[0][21],
+                'is_backfilling': Construction_attrib[0][22],
+                'is_inspecting': Construction_attrib[0][23],
+                'Lifting_type': Construction_attrib[0][24]
+            })
+
+            progress_labour_value += progress_iteration
+            progress_spinner(progress_labour_value*100)
+
+        return entities_construction_data
