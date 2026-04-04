@@ -1,0 +1,1066 @@
+
+    def entity_ML_Data(edges_data, dataframe):
+        global progress_labour_value, progress_iteration
+
+        def material_catagory(cata, product):
+
+            # Logic is that the primary material of the product is encoded - if it's not homogeneous, then is_composite is encoded also
+            is_steel = 0
+            is_masonry = 0
+            is_plastic = 0
+            is_plaster = 0
+            is_Composite = 0
+            is_timber = 0
+            is_concrete = 0
+            is_rock = 0
+            is_glass = 0
+
+            if cata == 'Masonry':
+                is_masonry = 1
+            elif cata == 'Steel':
+                is_steel = 1
+            elif cata == 'Plastic':
+                is_plastic = 1
+            elif cata == 'Plaster':
+                is_plaster = 1
+            elif cata == 'Composite':
+                is_Composite = 1
+            elif cata == 'Timber':
+                is_timber = 1
+            elif cata == 'Concrete':
+                is_concrete = 1
+
+                Concrete_mix_desc = next(
+                        (p for p in concrete_mixes if p["name"] == product),
+                        None
+                    )
+                
+                if Concrete_mix_desc:
+                    
+                    reinforcement = Concrete_mix_desc["composition"]["reinforcement"]["product"]
+                    reinforcement_desc = next(
+                        (p for p in total_products_list if p["product_name"] == reinforcement),
+                        None
+                    )
+
+                    # Eventually need one here for tensioning steel as well
+
+                    if reinforcement_desc:
+                        is_Composite = 1
+                
+            elif cata == 'Rock':
+                is_rock = 1
+            elif cata == 'Glass':
+                is_glass = 1
+
+            return is_masonry, is_steel, is_plastic, is_plaster, is_Composite, is_timber, is_concrete, is_rock, is_glass
+
+        def estimate_floors_data_driven(Z):
+            Z = np.asarray(Z)
+
+            bin_width = 0.05
+            bins = np.arange(Z.min(), Z.max() + bin_width, bin_width)
+            counts, edges = np.histogram(Z, bins=bins)
+            centers = (edges[:-1] + edges[1:]) / 2
+
+            smooth = gaussian_filter1d(counts, sigma=2)
+
+            peaks, props = find_peaks(
+                smooth,
+                distance=int(0.5 / bin_width),
+                prominence=np.percentile(smooth, 30)
+            )
+
+            peak_z = centers[peaks]
+
+            if 0 not in peak_z:
+                peak_z = np.append(peak_z, 0)
+
+            dz = np.diff(np.sort(peak_z))
+            dz = dz[dz > 0.5]
+            
+            story_height = np.median(dz)
+            
+            n_stories = int(round((max(Z) - min(Z)) / story_height))
+
+            prominences = props["prominences"]
+            ranked = np.argsort(prominences)[::-1]
+
+            selected_peaks = peaks[ranked[:n_stories]]
+            floor_levels = np.sort(centers[selected_peaks])
+
+            # --- force ground floor ---
+            tol = 0.2 * story_height
+            floor_levels = np.unique(
+                np.concatenate(([0.0], floor_levels[np.abs(floor_levels) > tol]))
+            )
+
+            return floor_levels, story_height
+        
+        def vertical_access_elements(dataframe, entities_list):
+            vertical_access_rows = dataframe[
+                dataframe["Vertical Access Elements(Y/N)"] == "Y"
+            ]
+            Column_vertical_access_elements = vertical_access_rows["Name"].tolist()
+
+            vertical_access_entities = []
+
+            for name_list in Column_vertical_access_elements:
+                vertical_access_entities.extend(name_list)
+            
+            access_entities = []
+
+            for entity in entities_list:
+                name_entity = entity['Name']
+                if is_name_in_list(name_entity, vertical_access_entities):
+                    access_entities.append(entity)
+            return access_entities
+        
+        def is_name_in_list(name, name_list):
+            base_name = re.sub(r'_\d+$', '', name)
+            return base_name in name_list
+
+        def get_matching_name(name, name_list):
+            base_name = re.sub(r'_\d+$', '', name)
+            return base_name if base_name in name_list else None
+
+        def find_all_predecessors(dependancy_graph_val, name_entity):
+            predecessors = set()
+            queue = [name_entity]
+            visited = set()
+            
+            while queue:
+                current = queue.pop(0)
+                if current in visited:
+                    continue
+                visited.add(current)
+                
+                # Find who supports 'current'
+                for supporter, dependents in dependancy_graph_val.items():
+                    if current in dependents and supporter not in visited:
+                        predecessors.add(supporter)
+                        queue.append(supporter)
+            
+            # Remove __GROUND__ if you don't want it in results
+            predecessors.discard("__GROUND__")
+            
+            return list(predecessors)
+
+        def can_reach_ground(ranges, lowest_point, tolerance=0.5):
+            if not ranges:
+                # No ranges - check if lowest_point is directly within tolerance of ground
+                return lowest_point <= tolerance
+            
+            # Helper function to check if two z-ranges are within tolerance
+            def within_tolerance(z1_min, z1_max, z2_min, z2_max):
+                """Check if two ranges can connect (within tolerance)."""
+                # Check if the gap between them is <= tolerance
+                gap = max(z2_min - z1_max, z1_min - z2_max)
+                return gap <= tolerance
+            
+            # Check if lowest_point connects to a range
+            def point_connects_to_range(point, range_dict):
+                """Check if a point is within tolerance of a range."""
+                return (range_dict["Min_z"] - tolerance <= point <= range_dict["Max_z"] + tolerance)
+            
+            # Check if a range connects to ground
+            def range_connects_to_ground(range_dict):
+                """Check if range Min_z is within tolerance of ground (0)."""
+                return range_dict["Min_z"] <= tolerance
+            
+            # Build graph: find which ranges are reachable from lowest_point
+            # BFS approach
+            queue = deque()
+            visited = set()
+            
+            # Find starting ranges (connected to lowest_point)
+            for i, r in enumerate(ranges):
+                if point_connects_to_range(lowest_point, r):
+                    queue.append(i)
+                    visited.add(i)
+            
+            # If no starting point, we can't proceed
+            if not queue:
+                return False
+            
+            # BFS traversal
+            while queue:
+                current_idx = queue.popleft()
+                current_range = ranges[current_idx]
+                
+                # Check if current range reaches ground
+                if range_connects_to_ground(current_range):
+                    return True
+                
+                # Find neighboring ranges
+                for i, r in enumerate(ranges):
+                    if i not in visited:
+                        if within_tolerance(
+                            current_range["Min_z"], current_range["Max_z"],
+                            r["Min_z"], r["Max_z"]
+                        ):
+                            queue.append(i)
+                            visited.add(i)
+            
+            # No path found
+            return False
+
+        def is_external_object(entity_edges, hull):
+              
+            def is_point_on_convex_hull_boundary(point, hull, tolerance=None):
+                if tolerance is None:
+                    bbox = np.ptp(hull.points, axis=0)
+                    tolerance = 1e-5 * np.linalg.norm(bbox)
+
+                for equation in hull.equations:
+                    normal = equation[:3]
+                    d = equation[3]
+                    distance = np.dot(normal, point) + d
+
+                    if abs(distance) < tolerance:
+                        # Approximate as on plane; optionally further check if it's within the convex polygon face
+                        return True
+                return False
+
+            entity_vertices = [v for e in entity_edges for v in e]
+            entity_vertices = np.array(entity_vertices)
+
+            is_external = 0
+
+            for v in entity_vertices:
+                if is_point_on_convex_hull_boundary(v, hull):
+                    # Point of the object is on the hull of the structure
+                    # Assume this as designation for externality
+                    is_external = 1
+                    break
+                
+            return is_external
+
+        def convex_hull_structure(edges_data):
+            structures_vertcies = []
+
+            for entity_data in edges_data:
+                
+                entity_edges = entity_data['Edges']
+                structures_vertcies.extend([v for e in entity_edges for v in e])
+
+            vertices = np.array(structures_vertcies)
+            hull = ConvexHull(vertices)
+            return hull
+        
+        def total_structural_height(entities_data):
+            vertices_z = []
+
+            vertices_2d = []
+
+            for e in entities_data:
+                edges = e['Edges']
+                vertices_z.extend([v[2]/1000 for e in edges for v in e])
+
+                for edge in edges:
+                    for v_1 in edge:
+                        vertices_2d.append((v_1[0]/1000, v_1[1]/1000))
+            
+            vertices_2d = np.array(vertices_2d)
+
+            plan_convex_hull = ConvexHull(vertices_2d)
+            plan_area = plan_convex_hull.volume
+            
+            return max(vertices_z), plan_area
+        
+        # 0) Dependancy graph 
+
+        Structural_catagories = ['Build-up', 'Masonry built', 'Concrete built', 'Angle', 'Bar', 'Channel', 'Concrete beam', 'Concrete column', 'Gabion', 'Hollow section',
+                                    'Mesh', 'Metal board', 'Planed timber', 'Sawn timber', 'T section', 'Universal Beam', 'Universal Column']
+
+        Dependancy_graph = dependancy_graph_new(edges_data, Structural_catagories, dataframe)
+
+        reverse_graph = defaultdict(set)
+        for child, parents in Dependancy_graph.items():
+            for parent in parents:
+                reverse_graph[parent].add(child)
+
+        Structures_hull = convex_hull_structure(edges_data)
+
+        structures_height, plan_area = total_structural_height(edges_data)
+
+        # 1) Organise data of all entities
+
+        # Only confirms Surface Area
+        entities_data = []
+
+        for entity_data in edges_data:
+            
+            entity_edges = entity_data['Edges']
+            entity_name = entity_data['Name']
+
+            row_intrest = None
+
+            for idx, row in dataframe.iterrows():
+
+                row_name = row['Name']
+
+                if entity_name in row_name:
+                    row_intrest = row
+                    break
+            
+            Material_Product = row_intrest["Material/Product"]
+            Surface_Product = row_intrest["Surface Product"]
+            Volume_entity = row_intrest[SOLIDvolume_col_title]
+            Surface_Area_entity = row_intrest[SOLIDsurface_col_title]
+            Dimensions_entity = row_intrest[SOLIDdimensions_col_title]
+            Number_faces = len(entity_data['Curved Faces']) + len(entity_data['Planar Faces'])
+
+            No_dependance = Dependancy_graph[entity_name]
+            No_dependant = reverse_graph[entity_name]
+
+            Is_edge_object = is_external_object(entity_edges, Structures_hull)
+
+            entities_data.append({
+                'Name':entity_name,
+                'Edges': entity_edges,
+                'Material Product': Material_Product,
+                'Surface Product': Surface_Product,
+                'Volume': Volume_entity,
+                'Surface Area': Surface_Area_entity,
+                'Dimensions': Dimensions_entity,
+                'No_faces':Number_faces,
+                'Is_edge_object':Is_edge_object,
+                'No_dependant': len(No_dependant),
+                'No_dependance': len(No_dependance)
+            })
+            
+            progress_labour_value += progress_iteration
+            progress_spinner(progress_labour_value*100)
+
+        # 2) Material data extraction
+
+        # For is_WetTrade, is_HotTrade, Is_SurfaceConstruction, is_prefabricated, Weight
+        # Density, Material_Family, and volume rectification. 
+        entities_data_1 = [] # Includes unit and volume based (skips mixables)
+
+        for entity in entities_data:
+            material_product_tmp = entity['Material Product']
+            try:
+                material_product = material_product_tmp['Design']
+            except:
+                material_product = material_product_tmp
+            
+            surface_Product = entity["Surface Product"]
+            volume_entity = entity['Volume']
+            volume_m3 = volume_entity * 1e-9
+
+            Material_Product_desc = next(
+                (p for p in total_products_list if p["product_name"] == material_product),
+                None
+            )
+            Concrete_mix_desc = next(
+                (p for p in concrete_mixes if p["name"] == material_product),
+                None
+            )
+            Plaster_mix_desc = next(
+                (p for p in plaster_mixes if p["name"] == material_product),
+                None
+            )
+            Masonry_mix_desc = next(
+                (p for p in masonry_walls if p["name"] == material_product),
+                None
+            )
+            Buildup_mix_desc = next(
+                (p for p in buildups if p["name"] == material_product),
+                None
+            )
+            Surface_Product_desc = next(
+                (p for p in total_products_list if p["product_name"] == surface_Product),
+                None
+            )
+
+            is_installed = 0
+            is_prefabricated = 0
+
+            if Material_Product_desc:
+                is_WetTrade = Material_Product_desc["WetTrade"]
+                is_HotTrade = Material_Product_desc["HotTrade"]
+                Density = Material_Product_desc["Density"]
+                Material_Family = Material_Product_desc["Material_Family"]
+                surface_area = entity['Surface Area']
+
+                if Material_Family == 'Additive':
+                    # Skip all entities which can't feasibly be predicted for construction. 
+                    continue
+                
+                if Material_Product_desc['product_volume'] == 1.00000999:
+                    # Product is installed/ is a unit product
+                    is_installed = 1
+                    volume_m3 = 0.0
+                    surface_area = 0.0
+
+
+                if Surface_Product_desc:
+                    Is_SurfaceConstruction = 1
+                else:
+                    Is_SurfaceConstruction = 0
+                
+                entities_data_1.append({
+                    'Name': entity['Name'],
+                    'Edges':entity['Edges'],
+                    'No_faces':entity['No_faces'],
+                    'Material Product': material_product,
+                    'Surface Product': surface_Product,
+                    'Volume': volume_m3,
+                    'Surface Area': surface_area,
+                    'Dimensions':entity['Dimensions'],
+                    'Density':Density,
+                    'WetTrade':is_WetTrade,
+                    'HotTrade':is_HotTrade,
+                    'Material_Family':Material_Family,
+                    'Is_SurfaceConstruction': Is_SurfaceConstruction,
+                    'is_prefabricated': is_prefabricated,
+                    'No_dependance': entity['No_dependance'],
+                    'Is_edge_object':entity['Is_edge_object'],
+                    'No_dependant': entity['No_dependant'],
+                    'is_installed': is_installed
+                }) 
+
+            elif Concrete_mix_desc:
+                Material_Family = 'Concrete'
+                is_WetTrade = 1
+                is_HotTrade = 0
+
+                reinforcement = Concrete_mix_desc["composition"]["reinforcement"]["product"]
+                reinforcement_desc = next(
+                    (p for p in total_products_list if p["product_name"] == reinforcement),
+                    None
+                )
+
+                is_prefabricated = Concrete_mix_desc['precast']
+
+                if is_prefabricated == 1:
+                    # Developed off site - no wet trade on site
+                    is_WetTrade = 0
+
+                if reinforcement_desc:
+                    Density = 2500
+                else:
+                    Density = 2400
+
+                if Surface_Product_desc:
+                    Is_SurfaceConstruction = 1
+                else:
+                    Is_SurfaceConstruction = 0
+                    
+                entities_data_1.append({
+                    'Name': entity['Name'],
+                    'Edges':entity['Edges'],
+                    'No_faces':entity['No_faces'],
+                    'Material Product': material_product,
+                    'Surface Product': surface_Product,
+                    'Volume': volume_m3,
+                    'Surface Area': entity['Surface Area'],
+                    'Dimensions':entity['Dimensions'],
+                    'Density':Density,
+                    'WetTrade':is_WetTrade,
+                    'HotTrade':is_HotTrade,
+                    'Material_Family':Material_Family,
+                    'Is_SurfaceConstruction': Is_SurfaceConstruction,
+                    'is_prefabricated': is_prefabricated,
+                    'No_dependance': entity['No_dependance'],
+                    'Is_edge_object':entity['Is_edge_object'],
+                    'No_dependant': entity['No_dependant'],
+                    'is_installed': is_installed
+                }) 
+                
+            elif Plaster_mix_desc:
+                Material_Family = 'Plaster'
+                is_WetTrade = 1
+                is_HotTrade = 0
+
+                binder_percent = Plaster_mix_desc['composition']['binder']['percent']
+                aggregate_percent = Plaster_mix_desc['composition']['aggregate']['percent']
+                water_percent = Plaster_mix_desc['composition']['water']['percent']
+
+                Density = ((binder_percent/100)*1440) + ((aggregate_percent/100)*1500) + ((water_percent/100)*1000)
+
+                if Surface_Product_desc:
+                    Is_SurfaceConstruction = 1
+                else:
+                    Is_SurfaceConstruction = 0
+                    
+                entities_data_1.append({
+                    'Name': entity['Name'],
+                    'Edges':entity['Edges'],
+                    'No_faces':entity['No_faces'],
+                    'Material Product': material_product,
+                    'Surface Product': surface_Product,
+                    'Volume': volume_m3,
+                    'Surface Area': entity['Surface Area'],
+                    'Dimensions':entity['Dimensions'],
+                    'Density':Density,
+                    'WetTrade':is_WetTrade,
+                    'HotTrade':is_HotTrade,
+                    'Material_Family':Material_Family,
+                    'Is_SurfaceConstruction': Is_SurfaceConstruction,
+                    'is_prefabricated': is_prefabricated,
+                    'No_dependance': entity['No_dependance'],
+                    'Is_edge_object':entity['Is_edge_object'],
+                    'No_dependant': entity['No_dependant'],
+                    'is_installed': is_installed
+                }) 
+
+            elif Masonry_mix_desc:
+                Material_Family = 'Masonry'
+                is_WetTrade = 1
+                is_HotTrade = 0
+
+                brick_product = Masonry_mix_desc['brick']
+                brick_desc = next(
+                    (p for p in total_products_list if p["product_name"] == brick_product),
+                    None
+                )
+                
+                wall_thickness = Masonry_mix_desc['wall_thickness_m']
+                joint_thickness = Masonry_mix_desc['joint_thickness_m']
+                cement_percent = Masonry_mix_desc['mortar']['cement_percent']
+                sand_percent = Masonry_mix_desc['mortar']['sand_percent']
+
+                brick_volume = brick_desc['product_volume'] * (1e-9) #m3
+
+                if brick_desc['category'] == 'Block':
+                    mortar_volume_per_block = (0.215*wall_thickness*(joint_thickness/2))*2 + (0.44*wall_thickness*(joint_thickness/2))*2
+
+                else:
+                    # Is a brick not block
+                    mortar_volume_per_block = (0.065*wall_thickness*(joint_thickness/2))*2 + (0.215*wall_thickness*(joint_thickness/2))*2
+
+                total_set_volume = mortar_volume_per_block + brick_volume
+                percent_cement = ((cement_percent/100)*mortar_volume_per_block)/total_set_volume
+                percent_sand = ((sand_percent/100)*mortar_volume_per_block)/total_set_volume
+                percent_water = (((100-sand_percent-cement_percent)/100)*mortar_volume_per_block)/total_set_volume
+                percent_brick = brick_volume/total_set_volume
+
+                Density = (percent_cement*1440)+(percent_sand*1440)+(percent_water*1000)+(percent_brick*1900)
+
+                if Surface_Product_desc:
+                    Is_SurfaceConstruction = 1
+                else:
+                    Is_SurfaceConstruction = 0
+
+                entities_data_1.append({
+                    'Name': entity['Name'],
+                    'Edges':entity['Edges'],
+                    'No_faces':entity['No_faces'],
+                    'Material Product': material_product,
+                    'Surface Product': surface_Product,
+                    'Volume': volume_m3,
+                    'Surface Area': entity['Surface Area'],
+                    'Dimensions':entity['Dimensions'],
+                    'Density':Density,
+                    'WetTrade':is_WetTrade,
+                    'HotTrade':is_HotTrade,
+                    'Material_Family':Material_Family,
+                    'Is_SurfaceConstruction': Is_SurfaceConstruction,
+                    'is_prefabricated': is_prefabricated,
+                    'No_dependance': entity['No_dependance'],
+                    'Is_edge_object':entity['Is_edge_object'],
+                    'No_dependant': entity['No_dependant'],
+                    'is_installed': is_installed
+                }) 
+                
+            elif Buildup_mix_desc:
+                
+                list_outer_layers = Buildup_mix_desc['outer_layers']
+
+                # Total thickness
+                total_thickness = 0.0
+                for layer_bu in Buildup_mix_desc["layers"]:
+                    total_thickness += layer_bu['thickness_m']
+                
+                if Buildup_mix_desc["type"] == "Framed":
+                    framing_desc = Buildup_mix_desc["framing"]
+
+                    Area_frame = framing_desc["area"]
+                    Thickness_frame = framing_desc["thickness"]
+                    height_frame = framing_desc["panel_h"]
+                    width_frame = framing_desc["panel_w"]
+                    total_thickness += Thickness_frame
+
+                    volume_frame = 2*Area_frame*(width_frame+height_frame-(2*Area_frame/Thickness_frame))
+                    volume_insulation = (Thickness_frame*height_frame*width_frame) - volume_frame
+
+                    frame_volume_required = volume_entity*(Thickness_frame/total_thickness)
+                    no_frames = (frame_volume_required*1e-9)/(volume_frame+volume_insulation)
+
+                    volume_frames_total = no_frames * volume_frame
+                    volume_insulation_total = no_frames * volume_insulation
+
+                    timber_product = framing_desc["timber"]
+                    timber_product_desc = next(
+                        (p for p in total_products_list if p["product_name"] == timber_product),
+                        None
+                    )
+                    insulation_product = framing_desc["insulation"]
+                    insulation_product_desc = next(
+                        (p for p in total_products_list if p["product_name"] == insulation_product),
+                        None
+                    )
+                    
+                    insulation_is_WetTrade = insulation_product_desc["WetTrade"]
+                    insulation_is_HotTrade = insulation_product_desc["HotTrade"]
+                    insulation_Density = insulation_product_desc["Density"]
+                    insulation_Material_Family = insulation_product_desc["Material_Family"]
+
+                    timber_is_WetTrade = timber_product_desc["WetTrade"]
+                    timber_is_HotTrade = timber_product_desc["HotTrade"]
+                    timber_Density = timber_product_desc["Density"]
+                    timber_Material_Family = timber_product_desc["Material_Family"]
+
+                    # Plain stress view - so assume surface area stays the same. 
+                    entities_data_1.append({
+                        'Name': f"{entity['Name']}_1",
+                        'Edges':entity['Edges'],
+                        'No_faces':entity['No_faces'],
+                        'Material Product': material_product,
+                        'Surface Product': surface_Product,
+                        'Volume': volume_frames_total,
+                        'Surface Area': entity['Surface Area'],
+                        'Dimensions':entity['Dimensions'],
+                        'Density':timber_Density,
+                        'WetTrade':timber_is_WetTrade,
+                        'HotTrade':timber_is_HotTrade,
+                        'Material_Family':timber_Material_Family,
+                        'Is_SurfaceConstruction': 0,
+                        'is_prefabricated': 0,
+                        'No_dependance': entity['No_dependance'], # Timber layer depends on number 
+                        'Is_edge_object': 0,
+                        'No_dependant': entity['No_dependant'], # Number depends on this timber
+                        'is_installed': 0
+                    }) 
+                    if volume_insulation_total > 0:
+                        entities_data_1.append({
+                            'Name': f"{entity['Name']}_2",
+                            'Edges':entity['Edges'],
+                            'No_faces':entity['No_faces'],
+                            'Material Product': material_product,
+                            'Surface Product': surface_Product,
+                            'Volume': volume_insulation_total,
+                            'Surface Area': entity['Surface Area'],
+                            'Dimensions':entity['Dimensions'],
+                            'Density':insulation_Density,
+                            'WetTrade':insulation_is_WetTrade,
+                            'HotTrade':insulation_is_HotTrade,
+                            'Material_Family':insulation_Material_Family,
+                            'Is_SurfaceConstruction': 0,
+                            'is_prefabricated': 0,
+                            'No_dependance': 1, # Insulation depends on this timber
+                            'Is_edge_object':0,
+                            'No_dependant': 0, # Nothing depends on this insulation
+                            'is_installed': 0
+                        })
+
+                for index, layer_bu in enumerate(Buildup_mix_desc["layers"]):
+                    product = layer_bu['product']
+                    thickness = layer_bu['thickness_m']
+                    volume_required = volume_entity * (thickness/total_thickness) * (1e-9)
+                    layer_num = layer_bu["layer"]
+
+                    is_product = next(
+                        (p for p in total_products_list if p["product_name"] == product),
+                        None
+                    )
+                    is_conecrete_mix = next(
+                        (p for p in concrete_mixes if p["name"] == product),
+                        None
+                    )
+                    is_plaster_mix = next(
+                        (p for p in plaster_mixes if p["name"] == product),
+                        None
+                    )
+                    is_masonry_mix = next(
+                        (p for p in masonry_walls if p["name"] == product),
+                        None
+                    )
+                    
+                    name_i = index + 3
+                    Name = f"{entity['Name']}_{name_i}"
+                    Edges = entity['Edges']
+                    Surface_Area = entity['Surface Area']
+                    BB_Dimensions = entity['Dimensions']
+
+                    if (layer_num in list_outer_layers) and Surface_Product_desc:
+                        Is_SurfaceConstruction = 1
+                    else:
+                        Is_SurfaceConstruction = 0
+
+                    if is_product:
+                           
+                        catagory_used = is_product["category"] 
+
+                        Density = is_product['Density']
+
+                        WetTrade = is_product['WetTrade']
+                        HotTrade = is_product['HotTrade']
+
+                        Material_Family = is_product['Material_Family']
+
+                        is_prefabricated = 0
+
+                    elif is_conecrete_mix:
+                        Material_Family = 'Concrete'
+                        WetTrade = 1
+                        HotTrade = 0
+
+                        reinforcement = is_conecrete_mix["composition"]["reinforcement"]["product"]
+                        reinforcement_desc = next(
+                            (p for p in total_products_list if p["product_name"] == reinforcement),
+                            None
+                        )
+
+                        is_prefabricated = is_conecrete_mix['precast']
+
+                        if reinforcement_desc:
+                            Density = 2500
+                        else:
+                            Density = 2400
+
+                        catagory_used = 'Concrete built'
+
+                    elif is_plaster_mix:
+                        Material_Family = 'Plaster'
+                        WetTrade = 1
+                        HotTrade = 0
+
+                        binder_percent = is_plaster_mix['composition']['binder']['percent']
+                        aggregate_percent = is_plaster_mix['composition']['aggregate']['percent']
+                        water_percent = is_plaster_mix['composition']['water']['percent']
+
+                        Density = ((binder_percent/100)*1440) + ((aggregate_percent/100)*1500) + ((water_percent/100)*1000)
+
+                        is_prefabricated = 0
+
+                        catagory_used = 'Plaster built'
+
+                    elif is_masonry_mix:
+                        Material_Family = 'Masonry'
+                        WetTrade = 1
+                        HotTrade = 0
+
+                        brick_product = is_masonry_mix['brick']
+                        brick_desc = next(
+                            (p for p in total_products_list if p["product_name"] == brick_product),
+                            None
+                        )
+                        
+                        wall_thickness = is_masonry_mix['wall_thickness_m']
+                        joint_thickness = is_masonry_mix['joint_thickness_m']
+                        cement_percent = is_masonry_mix['mortar']['cement_percent']
+                        sand_percent = is_masonry_mix['mortar']['sand_percent']
+
+                        brick_volume = brick_desc['product_volume'] * (1e-9) #m3
+
+                        if brick_desc['category'] == 'Block':
+                            mortar_volume_per_block = (0.215*wall_thickness*(joint_thickness/2))*2 + (0.44*wall_thickness*(joint_thickness/2))*2
+
+                        else:
+                            # Is a brick not block
+                            mortar_volume_per_block = (0.065*wall_thickness*(joint_thickness/2))*2 + (0.215*wall_thickness*(joint_thickness/2))*2
+
+                        total_set_volume = mortar_volume_per_block + brick_volume
+                        percent_cement = ((cement_percent/100)*mortar_volume_per_block)/total_set_volume
+                        percent_sand = ((sand_percent/100)*mortar_volume_per_block)/total_set_volume
+                        percent_water = (((100-sand_percent-cement_percent)/100)*mortar_volume_per_block)/total_set_volume
+                        percent_brick = brick_volume/total_set_volume
+
+                        Density = (percent_cement*1440)+(percent_sand*1440)+(percent_water*1000)+(percent_brick*1900)
+
+                        is_prefabricated = 0
+
+                        catagory_used = 'Masonry built'
+
+                    if catagory_used in ['Build-up', 'Masonry built', 'Concrete built', 'Angle', 'Bar', 'Channel', 'Concrete beam', 'Concrete column', 'Gabion', 'Hollow section',
+                                    'Mesh', 'Metal board', 'Planed timber', 'Sawn timber', 'T section', 'Universal beam', 'Universal column']:
+
+                        entities_data_1.append({
+                            'Name': Name,
+                            'Edges': Edges,
+                            'No_faces':entity['No_faces'],
+                            'Material Product': material_product,
+                            'Surface Product': surface_Product,
+                            'Volume': volume_required,
+                            'Surface Area': Surface_Area,
+                            'Dimensions': BB_Dimensions,
+                            'Density':Density, # Variable
+                            'WetTrade': WetTrade, # Variable
+                            'HotTrade': HotTrade, # Variable
+                            'Material_Family': Material_Family, # Variable
+                            'Is_SurfaceConstruction': Is_SurfaceConstruction, # Variable
+                            'is_prefabricated': is_prefabricated, # Variable,
+                            'No_dependance': entity['No_dependance'],
+                            'Is_edge_object': 0,
+                            'No_dependant': entity['No_dependant'],
+                            'is_installed': is_installed
+                        }) 
+                    else:
+                        
+                        entities_data_1.append({
+                            'Name': Name,
+                            'Edges': Edges,
+                            'No_faces':entity['No_faces'],
+                            'Material Product': material_product,
+                            'Surface Product': surface_Product,
+                            'Volume': volume_required,
+                            'Surface Area': Surface_Area,
+                            'Dimensions': BB_Dimensions,
+                            'Density':Density, # Variable
+                            'WetTrade': WetTrade, # Variable
+                            'HotTrade': HotTrade, # Variable
+                            'Material_Family': Material_Family, # Variable
+                            'Is_SurfaceConstruction': Is_SurfaceConstruction, # Variable
+                            'is_prefabricated': is_prefabricated, # Variable,
+                            'No_dependance': 1, # non-structural layer can only be dependant on one thing
+                            'Is_edge_object': entity['Is_edge_object'],
+                            'No_dependant': 0, # nothing depends on a non-structural layer.
+                            'is_installed': is_installed
+                        }) 
+
+            progress_labour_value += progress_iteration
+            progress_spinner(progress_labour_value*100)
+
+        # 3) Geometric variables 
+
+        # For BBX_x, BB_y, BB_z, Min_z, Max_z, Aspect_Ratio_XY, Aspect_ratio_z
+        # Thickness_proxy, Centroid_X, Centroid_Y, Centroid_Z
+
+        entities_data_2 = []
+        Total_z_list = [] #m
+        
+        for entity_1 in entities_data_1:
+            
+            # Gathering variables
+            dimensions_entity = entity_1['Dimensions']
+            volume_entity = entity_1['Volume']
+            Surface_Area_entity = entity_1['Surface Area']
+            edges_entity = entity_1['Edges']
+            vertices_entity = [v for e in edges_entity for v in e]
+            zs_vals = [v[2] for v in vertices_entity]
+            Total_z_list.extend([z/1000 for z in zs_vals])
+
+            # Computing the geometric values
+            Min_z = (min(zs_vals) / 1000)
+            Max_z = (max(zs_vals) / 1000)
+            BB_x_1 = dimensions_entity[0] / 1000
+            BB_y_1 = dimensions_entity[1] / 1000
+
+            BB_x = max([BB_x_1, BB_y_1])
+            BB_y = min([BB_x_1, BB_y_1])
+
+            BB_z = dimensions_entity[2] / 1000
+            Apect_Ratio_xy = BB_x/BB_y
+            Aspect_Ratio_Z = BB_z/max(BB_x, BB_y)
+            Thickness_Proxy = volume_entity / (Surface_Area_entity * (1e-6))
+            Relative_elevation = (Max_z) / structures_height
+
+            entities_data_2.append({
+                    'Name': entity_1['Name'],
+                    'Edges':entity_1['Edges'], # in mm
+                    'No_faces':entity_1['No_faces'],
+                    'Material Product': entity_1['Material Product'],
+                    'Surface Product': entity_1['Surface Product'],
+                    'Volume': volume_entity, #m3
+                    'Surface Area': Surface_Area_entity, # mm2
+                    'BB_x': BB_x, #m
+                    'BB_y': BB_y, #m
+                    'BB_z': BB_z, #m
+                    'Min_z': Min_z, #m
+                    'Max_z': Max_z, #m
+                    'Relative_elevation': Relative_elevation,
+                    'Apect_Ratio_xy': Apect_Ratio_xy, #Unitless
+                    'Aspect_Ratio_Z': Aspect_Ratio_Z, #Unitless
+                    'Thickness_Proxy': Thickness_Proxy, #m
+                    'Dimensions':entity_1['Dimensions'], #mm
+                    'Density':entity_1['Density'], #kg/m3
+                    'WetTrade':entity_1['WetTrade'], # 0 / 1
+                    'HotTrade':entity_1['HotTrade'], # 0 / 1
+                    'Material_Family':entity_1['Material_Family'], # Str
+                    'Is_SurfaceConstruction': entity_1['Is_SurfaceConstruction'], # 0 / 1,
+                    'is_prefabricated': entity_1['is_prefabricated'],
+                    'No_dependance': entity_1['No_dependance'],
+                    'Is_edge_object': entity_1['Is_edge_object'],
+                    'No_dependant': entity_1['No_dependant'], 
+                    'is_installed': entity_1['is_installed']
+                }) 
+
+            progress_labour_value += progress_iteration
+            progress_spinner(progress_labour_value*100)
+
+        # 4) Obtaining Stories
+
+        assumed_stories, assumed_storey_height = estimate_floors_data_driven(Total_z_list)
+
+        entities_data_3 = []
+
+        for entity_2 in entities_data_2:
+            lowest_point = entity_2['Min_z']
+            
+            entity_2_cp = entity_2.copy()
+
+            if lowest_point<0:
+                entity_2_cp['Storey'] = -1
+                entities_data_3.append(entity_2_cp)
+                continue
+                
+            for storey, storey_val in enumerate(assumed_stories):
+
+                if assumed_stories[storey-1] <= lowest_point < storey_val:
+                    entity_2_cp['Storey'] = storey - 1
+                    entities_data_3.append(entity_2_cp)
+                    break
+
+                if storey == len(assumed_stories) - 1:
+                    # last iteration
+                    entity_2_cp['Storey'] = storey - 1
+                    entities_data_3.append(entity_2_cp)
+
+            progress_labour_value += progress_iteration
+            progress_spinner(progress_labour_value*100)
+
+        # 5) Precceding access
+
+        entities_data_4 = []
+
+        # All entities which are stairs/ramps/vertical acces elements - list of their datsets
+        vert_acces_elems = vertical_access_elements(dataframe, edges_data) # Includes no _i addition
+        all_names = [e['Name'] for e in edges_data] # Includes no _i names
+
+        # All collectives ; for is_collective
+        collectives = is_collective_indicate(entities_data_3, Dependancy_graph, reverse_graph)
+        collectives_names = [name for cluster in collectives for name in cluster]
+
+        for i_1, entity_3 in enumerate(entities_data_3):
+            # Lowest extent of entity
+            lowest_point = entity_3['Min_z']
+            name_entity_3 = entity_3['Name'] # has _i addition sometimes
+            name_entity = get_matching_name(name_entity_3, all_names) # no _i addition
+
+            entity_3_cp = entity_3.copy()
+
+            # Find the entities which physically must be developed before this one
+            required_predescsors_lst = find_all_predecessors(Dependancy_graph, name_entity) #  Includes no _i names
+
+            # Find all the preceding vertical access elements
+            vert_acces_predscsors = [elem for elem in vert_acces_elems if elem['Name'] in required_predescsors_lst] #  Includes no _i names
+            # Get in real values with _i extension
+            predessecor_ranges = []
+            for i_2, e_w_ext in enumerate(entities_data_3):
+                if i_1 == i_2:
+                    continue
+
+                name_w_ext = e_w_ext['Name']
+
+                if is_name_in_list(name_w_ext, vert_acces_predscsors):
+                    predessecor_ranges.append({
+                        "Max_z": e_w_ext['Max_z'],
+                        "Min_z": e_w_ext['Min_z']
+                    })
+
+            if can_reach_ground(predessecor_ranges, lowest_point):
+                # For this entity, sufficent predesscor vertical access medians have been constructed
+                # Assuming 0.5m being moveable vertically by inidviduals. 
+                entity_3_cp['Has_Predceding_Access'] = 1
+            else:
+                entity_3_cp['Has_Predceding_Access'] = 0
+
+            if name_entity_3 in collectives_names:
+                entity_3_cp['is_collective'] = 1
+            else:
+                entity_3_cp['is_collective'] = 0
+
+            entities_data_4.append(entity_3_cp)
+
+            progress_labour_value += progress_iteration
+            progress_spinner(progress_labour_value*100)
+
+        # 6) Organise into useable format
+
+        entities_predictors = []
+
+        for entity_4 in entities_data_4:
+            # --- Management values ---
+            Name = entity_4['Name']
+            Edges = entity_4['Edges'] # in mm
+            Material_Product = entity_4['Material Product']
+            Surface_Product = entity_4['Surface Product']
+            
+            # --- Geometric values ---
+            Volume = entity_4['Volume'] #m3
+            Surface_Area = entity_4['Surface Area'] * (1e-6) # mm2
+            BB_x = entity_4['BB_x'] #m
+            BB_y = entity_4['BB_y'] #m
+            BB_z = entity_4['BB_z'] #m
+            Min_z = entity_4['Min_z'] #m
+            Max_z = entity_4['Max_z'] #m
+            Apect_Ratio_xy = entity_4['Apect_Ratio_xy'] #Unitless
+            Aspect_Ratio_Z = entity_4['Aspect_Ratio_Z'] #Unitless
+            Thickness_Proxy = entity_4['Thickness_Proxy'] #m
+            Density = entity_4['Density'] #kg/m3
+            No_faces = entity_4['No_faces']
+            Relative_elevation = entity_4['Relative_elevation']
+            
+            # --- Construction values ---
+            WetTrade = entity_4['WetTrade'] # 0 / 1
+            HotTrade = entity_4['HotTrade'] # 0 / 1
+            Is_SurfaceConstruction = entity_4['Is_SurfaceConstruction'] # 0 / 1
+            is_prefabricated = entity_4['is_prefabricated'] # 0 / 1
+            No_dependance = entity_4['No_dependance'] # Int
+            No_dependant = entity_4['No_dependant'] # Int
+            Is_edge_object = entity_4['Is_edge_object'] # 0 / 1
+            Has_Predceding_Access = entity_4['Has_Predceding_Access'] # 0 / 1
+            Storey = entity_4['Storey'] # sequential 0,1,2,3...
+            is_installed = entity_4['is_installed'] # 0 / 1
+            is_collective = entity_4['is_collective'] # 0/1
+
+            Material_Family = entity_4['Material_Family'] # Catagorical
+            is_masonry, is_steel, is_plastic, is_plaster, is_Composite, is_timber, is_concrete, is_rock, is_glass = material_catagory(Material_Family, Material_Product)
+
+            entity_predictors = {
+                'Name': Name, # VALIDATED
+                'Edges': Edges,
+                'Plan_Area': plan_area, # VALIDATED
+                'Volume': Volume,  # VALIDATED
+                'Surface_Area': Surface_Area, # VALIDATED
+                'BB_x': BB_x, # VALIDATED
+                'BB_y': BB_y, # VALIDATED
+                'BB_z': BB_z, # VALIDATED
+                'Min_z': Min_z, # VALIDATED
+                'Max_z': Max_z, # VALIDATED
+                'Apect_Ratio_xy': Apect_Ratio_xy, # VALIDATED
+                'Aspect_Ratio_Z': Aspect_Ratio_Z, # VALIDATED 
+                'Thickness_Proxy': Thickness_Proxy, # VALIDATED
+                'Density': Density, # VALIDATED
+                'No_faces':No_faces, # VALIDATED
+                'is_WetTrade': WetTrade, # VALIDATED
+                'is_HotTrade': HotTrade, # VALIDATED
+                'Is_SurfaceConstruction': Is_SurfaceConstruction, # VALIDATED
+                'is_collective': is_collective, # VALIDATED
+                'is_prefabricated': is_prefabricated, # VALIDATED
+                'No_dependance': No_dependance, # VALIDATED
+                'No_dependants': No_dependant, # VALIDATED
+                'Has_Predceding_Access': Has_Predceding_Access, # VALIDATED
+                'Storey': Storey, # VALIDATED
+                'is_installed': is_installed, # VALIDATED
+                'Relative_elevation':Relative_elevation, # VALIDATED
+                'Is_edge_object':Is_edge_object, # VALIDATED
+                'is_masonry': is_masonry, # VALIDATED
+                'is_steel': is_steel, # VALIDATED
+                'is_Composite': is_Composite, # VALIDATED
+                'is_concrete': is_concrete, # VALIDATED
+                'is_rock': is_rock, # VALIDATED
+                'is_timber': is_timber # VALIDATED
+            }
+    
+            entities_predictors.append(entity_predictors)
+        
+            progress_labour_value += progress_iteration
+            progress_spinner(progress_labour_value*100)
+
+        return entities_predictors, Dependancy_graph, reverse_graph, collectives
+    
