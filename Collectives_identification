@@ -1,0 +1,316 @@
+
+        def is_collective_indicate(enties_data, dependancy_graph, reverse_dependancy_graph):
+            
+            # ---- HELPER FUNCTIONS -----
+            def fit_plane_from_edges(edges):
+                """
+                Fit a best-fit plane to vertices of a 3D element.
+                Returns (normal_vector, point_on_plane)
+                """
+
+                # Collect vertices
+                points = np.array([v for e in edges for v in e], dtype=float)
+
+                if len(points) < 3:
+                    return None  # Not enough points
+
+                # Compute centroid
+                centroid = points.mean(axis=0)
+
+                # Center points
+                centered = points - centroid
+
+                # SVD
+                _, _, vh = np.linalg.svd(centered)
+
+                # Normal is last singular vector
+                normal = vh[-1]
+
+                # Normalize
+                normal = normal / np.linalg.norm(normal)
+
+                return normal, centroid
+
+            def planes_are_similar(plane1, plane2,
+                       angle_tol_deg=5,
+                       distance_tol=0.1):
+                """
+                Returns True if two planes are approximately the same.
+                """
+
+                if plane1 is None or plane2 is None:
+                    return False
+
+                n1, p1 = plane1
+                n2, p2 = plane2
+
+                # Normalize normals
+                n1 = n1 / np.linalg.norm(n1)
+                n2 = n2 / np.linalg.norm(n2)
+
+                # Check angle between normals
+                dot = np.clip(np.dot(n1, n2), -1.0, 1.0)
+                angle = np.degrees(np.arccos(abs(dot)))
+
+                if angle > angle_tol_deg:
+                    return False
+
+                # Compute plane offsets
+                d1 = -np.dot(n1, p1)
+                d2 = -np.dot(n2, p2)
+
+                # Compare offsets
+                if abs(d1 - d2) > distance_tol:
+                    return False
+
+                return True
+
+            def truss_levels(Z):
+                Z = np.asarray(Z)
+
+                bin_width = 0.05
+                bins = np.arange(Z.min(), Z.max() + bin_width, bin_width)
+                counts, edges = np.histogram(Z, bins=bins)
+                centers = (edges[:-1] + edges[1:]) / 2
+
+                smooth = gaussian_filter1d(counts, sigma=2)
+
+                peaks, props = find_peaks(
+                    smooth,
+                    distance=int(0.5 / bin_width),
+                    prominence=np.percentile(smooth, 30)
+                )
+
+                prominences = props["prominences"]
+                ranked = np.argsort(prominences)[::-1]
+
+                selected_peaks = peaks[ranked[:2]]
+                floor_levels = np.sort(centers[selected_peaks])
+
+                return floor_levels
+        
+            # 1) Find relevant elements
+
+            eligable_entities = []
+            bracing_elements = []
+
+            for e_data in enties_data:
+                BB_x = e_data['BB_x'] #m
+                BB_y = e_data['BB_y'] #m
+                BB_z = e_data['BB_z'] #m
+                Min_z = e_data['Min_z'] #m
+                Max_z = e_data['Max_z'] #m
+                Material_Product = e_data['Material Product']
+                Material_Family = e_data['Material_Family'] 
+                _, is_steel, _, _, _, is_timber, is_concrete, _, _ = material_catagory(Material_Family, Material_Product)
+
+                if is_steel == 1 or is_concrete == 1 or is_timber == 1:
+                    # Is truss materials
+
+                    if BB_x < 0.25 * BB_z and BB_y < 0.25 * BB_z:
+                        # Is slender
+                        eligable_entities.append(e_data)
+
+                        if not math.isclose(Max_z, Min_z + BB_z, rel_tol=0.1):
+                            # Is slanted
+                            bracing_elements.append(e_data)
+
+            # 2) Connectivity map
+
+            connectivity_map = {}
+
+            for leg_e_data in eligable_entities:
+                Name = leg_e_data['Name']
+                Edges = leg_e_data['Edges']
+
+                # Other elements dependant on this element, or other elements this element is dependant upon. 
+                No_dependance = dependancy_graph[Name]
+                No_dependant = reverse_dependancy_graph[Name]
+
+                connected_entities = list(set(No_dependance + No_dependant))
+
+                connectivity_map[Name] = connected_entities
+            
+            # 3) Planes of all elements
+
+            Members_plane_data = {}
+
+            for leg_e_data in eligable_entities:
+                plane = fit_plane_from_edges(leg_e_data['Edges'])
+                if plane is None:
+                    continue
+                e_normal, e_centroid = plane
+
+                Members_plane_data[leg_e_data['Name']] = {
+                    'Normal': e_normal,
+                    'Centroid': e_centroid
+                }
+            
+            braced_frame_clusters = []
+
+            for brac_e_data in bracing_elements:
+                Name = brac_e_data['Name']
+                Edges = brac_e_data['Edges']
+                
+                # Plane of this brace
+                brac_e_plane_data = Members_plane_data.get(Name)
+                if brac_e_plane_data is None:
+                    continue
+
+                brac_e_normal = brac_e_plane_data['Normal']
+                brac_e_centroid = brac_e_plane_data['Centroid']
+
+                # Find all entities within one step of the bracing 
+                first_collection = []
+                second_collection = []
+
+                # Direct (first collection) - within 0th step
+                direct_connected_entites = connectivity_map[Name]
+
+                for eli_e in eligable_entities:
+                    if eli_e['Name'] in direct_connected_entites:
+                        # Direct connected entitiy
+                        
+                        eli_e_plane_data = Members_plane_data.get(eli_e['Name'])
+                        if eli_e_plane_data is None:
+                            continue
+
+                        eli_e_normal = eli_e_plane_data['Normal']
+                        eli_e_centroid = eli_e_plane_data['Centroid']
+
+                        if planes_are_similar((brac_e_normal, brac_e_centroid), (eli_e_normal, eli_e_centroid)):
+                            first_collection.append(eli_e)
+                
+                # Second collection - within 1st step
+                for dir_e in first_collection:
+
+                    secondary_connected_entites = connectivity_map[dir_e['Name']]
+
+                    for eli_e_1 in eligable_entities:
+                        if eli_e_1['Name'] in secondary_connected_entites and eli_e_1['Name'] != Name:
+
+                            eli_e_plane_data_1 = Members_plane_data.get(eli_e_1['Name'])
+                            if eli_e_plane_data_1 is None:
+                                continue
+                            eli_e_normal_1 = eli_e_plane_data_1['Normal']
+                            eli_e_centroid_1 = eli_e_plane_data_1['Centroid']
+
+                            if planes_are_similar((brac_e_normal, brac_e_centroid), (eli_e_normal_1, eli_e_centroid_1)):
+                                second_collection.append(eli_e_1)
+                
+                first_collection.append(brac_e_data)
+
+                cluster_entities = first_collection + second_collection
+
+                braced_frame_clusters.append({
+                    'Cluster data': cluster_entities, 
+                    'Normal': brac_e_normal,
+                    'Centroid': brac_e_centroid
+                })
+
+            # 4) Group clusters based on plane and connectivity
+
+            cluster_graph = {i: set() for i in range(len(braced_frame_clusters))}
+
+            for i, cluster_i in enumerate(braced_frame_clusters):
+
+                names_i = {e['Name'] for e in cluster_i['Cluster data']}
+
+                # All elements connected to cluster_i
+                connected_i = set()
+                for name in names_i:
+                    connected_i.update(connectivity_map.get(name, []))
+
+                plane_i = (cluster_i['Normal'], cluster_i['Centroid'])
+
+                for j in range(i + 1, len(braced_frame_clusters)):
+                    cluster_j = braced_frame_clusters[j]
+
+                    names_j = {e['Name'] for e in cluster_j['Cluster data']}
+                    plane_j = (cluster_j['Normal'], cluster_j['Centroid'])
+
+                    # --- Check connectivity ---
+                    is_connected = (
+                        len(names_j.intersection(connected_i)) > 0
+                    )
+
+                    if not is_connected:
+                        continue
+
+                    # --- Check coplanarity ---
+                    if planes_are_similar(plane_i, plane_j):
+                        cluster_graph[i].add(j)
+                        cluster_graph[j].add(i)
+
+            visited = set()
+            groups_braced_frames = []
+
+            for i in range(len(braced_frame_clusters)):
+                if i in visited:
+                    continue
+
+                stack = [i]
+                component = set()
+
+                while stack:
+                    node = stack.pop()
+                    if node in visited:
+                        continue
+
+                    visited.add(node)
+                    component.add(node)
+
+                    stack.extend(cluster_graph[node] - visited)
+
+                # Merge all clusters in this component
+                merged_cluster = []
+                for idx in component:
+                    merged_cluster.extend(braced_frame_clusters[idx]['Cluster data'])
+
+                # Remove duplicates by element name
+                unique_by_name = {}
+                for elem in merged_cluster:
+                    unique_by_name[elem['Name']] = elem
+
+                groups_braced_frames.append(list(unique_by_name.values()))
+
+            # 5) Identify levels of collection - filter lists
+            
+            clusters = []
+
+            for cluster in groups_braced_frames:
+
+                # Collect all vertices of the cluster
+                vertices_cluster = []
+                for element in cluster:
+                    for edge in element['Edges']:
+                        vertices_cluster.append(edge[0])
+                        vertices_cluster.append(edge[1])
+
+                zs_cluster = [v[2] for v in vertices_cluster]
+
+                # Estimate levels of cluster
+                levels = truss_levels(zs_cluster)
+
+                if len(levels) < 2 or levels[1] - levels[0] > 10000:
+                    # A truss must be less than 10m depth - if greater than the cluster isn't correct
+                    continue
+                
+                kept_cluster = []
+
+                for element in cluster:
+                    is_within_levels = [False] * len(element['Edges'])
+                    for idx, edge in enumerate(element['Edges']):
+                        z_1 = edge[0][2]
+                        z_2 = edge[1][2]
+                        if z_1 > levels[0]*0.95 and  z_1 < levels[1]*1.05:
+                            if z_2 > levels[0]*0.95 and  z_2 < levels[1]*1.05:
+                                # element of cluster is within accepted levels
+                                is_within_levels[idx] = True
+
+                    if all(is_within_levels):
+                        kept_cluster.append(element['Name'])
+
+                clusters.append(kept_cluster)
+
+            return clusters
