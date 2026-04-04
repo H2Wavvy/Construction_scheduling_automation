@@ -35,7 +35,7 @@ To test this algorithm, you'll need to make significant modifications to the cod
 
 # Collectives_identification
 
-This Python function may be used for identifying entity collectives (targeted at Truss-like collectives) in networks of structural entities in structures. 
+This Python function may be used to identify entity collectives (targeted at Truss-like collectives) in networks of structural entities within structures. 
 The dependency graph and reverse dependency graph are obtained from the Graphing_Algorithm function in this repository.
 While the entities_data input should be in a format:
 entity_predictors = {
@@ -75,5 +75,7 @@ entity_predictors = {
             }
 
 
+# features_extraction 
 
+This is a code used for obtaining the features for a structural entity, which are to be used for predicting the construction tasks and their durations for that entity. The inputs are the same as for the graphing_algorithm of 'Complete Entities Data' and 'Raw Geometric Data'. This is an extract from a far more sparse program, and so, more refinements may need to be carried out in order for it to be tested personally. 
 
