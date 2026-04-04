@@ -1,5 +1,5 @@
 
-    def Gantt_data(dependancy_graph, dependant_graph, collective_clusters, entities_construct_data):
+    def Gantt_Chart_Data(dependancy_graph, dependant_graph, collective_clusters, entities_construct_data):
         global progress_labour_value, progress_iteration
     
         WORK_START_HOUR = 8
@@ -675,16 +675,8 @@
             for dep_name in all_dependencies:
 
                 # Get the data field for the previous entity (this entity/cluster is dependant upon)
-                matched_data = None
-                for key, value in construction_data.items():
-                    if isinstance(key, tuple):
-                        if dep_name in key:
-                            matched_data = value['Data']
-                            break
-                    else:
-                        if key == dep_name:
-                            matched_data = value['Data']
-                            break
+                result = construction_data_index.get(dep_name, None)
+                matched_data = result if result is not None else None
 
                 if matched_data is None:
                     continue
@@ -746,7 +738,8 @@
         it_idx = 0
         construction_data = {}
         Next_iteration_entities = None
-        constructed_entities = []
+        constructed_entities = set()
+        construction_data_index = {}
 
         # Gather propogation waves
         propogation_waves = []
@@ -772,7 +765,7 @@
 
                 # Find the next iterations entities
                 next_it_ents_temp = []
-                next_it_names = []
+                next_it_names = set()
 
                 for e in ground_entities:
                     if isinstance(e, list):
@@ -805,7 +798,7 @@
                                         cluster_data_next_it = []
                                         for clust_e in clusters_next[0]: 
                                             cluster_data_next_it.append(entities_construction_data_map[clust_e])
-                                            next_it_names.append(clust_e)
+                                            next_it_names.add(clust_e)
 
                                         next_it_ents_temp.append(cluster_data_next_it)
 
@@ -817,7 +810,7 @@
                                     if all([depends_name in ground_entities for depends_name in depends]):
                                         # All previous entities would have been completed
                                         next_it_ents_temp.append(entities_construction_data_map[dep])
-                                        next_it_names.append(dep)
+                                        next_it_names.add(dep)
                     else:
 
                         # Entities dependant on this ground entity
@@ -846,7 +839,7 @@
                                     next_it_cluster = []
                                     for clust_e in clusters_next[0]:
                                         next_it_cluster.append(entities_construction_data_map[clust_e])
-                                        next_it_names.append(clust_e)
+                                        next_it_names.add(clust_e)
 
                                     next_it_ents_temp.append(next_it_cluster)
 
@@ -860,14 +853,14 @@
                                 if all([depends_name in ground_entities for depends_name in depends]):
                                     # All previous entities that this next iteration entity have already been completed. 
                                     next_it_ents_temp.append(entities_construction_data_map[dep])
-                                    next_it_names.append(dep)
+                                    next_it_names.add(dep)
 
                 # Remove the entities to be constructed
                 for e in ground_entities:
                     if isinstance(e, list):
-                        constructed_entities.extend(e)
+                        constructed_entities.update(e)
                     else:
-                        constructed_entities.append(e)
+                        constructed_entities.add(e)
 
                 # Define construction of ground entities
                 for entity in ground_entities:
@@ -887,7 +880,9 @@
                         else:
                             constructing_data_e = heuristic_time_task_clusters(cluster_data, entity_start, cluster_names=entity, date_form=False)
 
-                        key_name = tuple(entity)  # Convert to tuple here
+                        key_name = tuple(entity)  
+                        for nest_e in entity: 
+                            construction_data_index[nest_e] = constructing_data_e
                     else:
                         entity_data = entities_construction_data_map[entity]
                         preliminary_data = heuristic_time_task(entity_data, start_date, entity) # arbitary start date for now, dosen't matter
@@ -902,11 +897,13 @@
                             constructing_data_e = heuristic_time_task(entity_data, entity_start, entity, date_form=False)
 
                         key_name = entity
+                        construction_data_index[entity] = constructing_data_e
 
                     construction_data[key_name] = {
                         'Data': constructing_data_e,
                         'Reliance': 'START'
                     }
+
                     propogation_waves.append({
                         'Name': constructing_data_e['Name'],
                         'Wave_No': it_idx
@@ -937,7 +934,9 @@
                             cluster_names, constructing_data_e, construction_data, dependancy_graph)
 
                         key_name = tuple(cluster_names)
-                        constructed_entities.extend(key_name)
+                        constructed_entities.update(key_name)
+                        for name in cluster_names:
+                            construction_data_index[name] = constructing_data_e
 
                     else:
                         preliminary_data = heuristic_time_task(e, start_date, e['Name'])
@@ -960,7 +959,8 @@
                             e, constructing_data_e, construction_data, dependancy_graph)
 
                         key_name = e['Name']
-                        constructed_entities.append(key_name)
+                        constructed_entities.add(key_name)
+                        construction_data_index[e['Name']] = constructing_data_e 
 
                     # Save the newly constructed entity
                     construction_data[key_name] = {
@@ -981,7 +981,7 @@
 
                 # Find the next iteration's entities
                 next_it_ents_temp = []
-                next_it_names = []
+                next_it_names = set()
 
                 for e in Next_iteration_entities:
                     # Find the next propogation wave's entities (theoretically) - just those dependant on this propogation wave
@@ -1011,13 +1011,14 @@
                                 depends.extend(dependancy_graph[nest_e])
 
                             # Check, that this collective relies on entities which have already been construced or on itself
-                            if all([depend_name in constructed_entities + clusters_relevant[0] for depend_name in depends]):
+                            cluster_set = set(clusters_relevant[0])
+                            if all([depend_name in constructed_entities or depend_name in cluster_set for depend_name in depends]):
                                 # This cluster relies on entities which are itself (typical for cluster) or already constructed.
 
                                 cluster_data_next_it = []
                                 for nest_e in clusters_relevant[0]: 
                                     cluster_data_next_it.append(entities_construction_data_map[nest_e])
-                                    next_it_names.append(nest_e)
+                                    next_it_names.add(nest_e)
 
                                 next_it_ents_temp.append(cluster_data_next_it)
                             
@@ -1030,7 +1031,7 @@
                             # Check, for this potential entity in the next propogation wave, are all of the entities it relies upon already constructed
                             if all([depends_name in constructed_entities for depends_name in depends]):
                                 next_it_ents_temp.append(entities_construction_data_map[dep])
-                                next_it_names.append(dep)
+                                next_it_names.add(dep)
 
                 if len(next_it_ents_temp) == 0:
                     # Stop the loop when propogation is completed
