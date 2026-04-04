@@ -63,12 +63,20 @@
 
         # 2) Regression model
 
-        # Random Forest - trained and tested
-        RF_regression = RandomForestRegressor(
-            n_estimators=4, max_depth=15, 
-            min_samples_leaf=2, random_state=2)
-                    
-        RF_regression.fit(df_inputs, df_reggres)
+        # Neural Network - trained and tested
+        NN_regression = Pipeline([
+            ('scaler', StandardScaler()),
+            ('mlp', MLPRegressor(
+                solver='adam',        # More robust than lbfgs for complex problems
+                random_state=0,
+                activation='relu',
+                hidden_layer_sizes=[int(20), int(20)],
+                max_iter=10000,       # adam needs fewer iterations than lbfgs
+                early_stopping=True,  # Stops when validation score stops improving
+                n_iter_no_change=20   # Patience before stopping
+            ))
+        ])       
+        NN_regression.fit(df_inputs, df_reggres)
 
         # 3) Classification model
 
@@ -94,7 +102,7 @@
             e_inputs = pd.DataFrame([predictors])[total_inputs]
 
             #Regression predictions
-            Construction_times = RF_regression.predict(e_inputs)
+            Construction_times = NN_regression.predict(e_inputs)
 
             #Classification predictions
             Construction_attrib = RF_classification.predict(e_inputs)
